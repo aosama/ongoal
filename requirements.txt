@@ -1,0 +1,87 @@
+# OnGoal Backend Dependencies
+# Chat interface system that enhances multi-turn LLM conversations with real-time goal tracking
+
+# ==========================================
+# Core Web Framework & Server
+# ==========================================
+# FastAPI: Modern, fast web framework for building REST APIs and WebSocket endpoints
+# - Needed for: Chat API endpoints, goal management APIs, real-time communication
+# - Features: Automatic OpenAPI docs, dependency injection, async support
+fastapi>=0.104.0
+
+# Uvicorn: ASGI server for running FastAPI applications in production
+# - Needed for: Serving the FastAPI application with WebSocket support
+# - Features: Hot reloading, async handling, high performance
+uvicorn[standard]>=0.24.0
+
+# ==========================================
+# Real-time Communication & WebSockets
+# ==========================================
+# Python-SocketIO: WebSocket implementation for real-time bidirectional communication
+# - Needed for: Streaming LLM responses, real-time goal updates, live pipeline results
+# - Features: Room management, event-based messaging, fallback to polling
+python-socketio>=5.10.0
+
+# ==========================================
+# LLM Integration - Anthropic Claude
+# ==========================================
+# Anthropic: Official SDK for Claude LLM integration
+# - Needed for: Chat LLM conversations, goal inference/merging/evaluation pipeline
+# - Features: Streaming responses, structured outputs, function calling
+anthropic>=0.40.0
+
+# ==========================================
+# Data Handling & Validation
+# ==========================================
+# Pydantic: Data validation and serialization with type hints
+# - Needed for: API request/response models, goal/message data structures, configuration
+# - Features: Automatic validation, JSON serialization, type safety
+pydantic>=2.5.0
+
+
+# ==========================================
+# Configuration & Environment
+# ==========================================
+# Python-Dotenv: Load environment variables from .env files
+# - Needed for: Managing API keys, configuration in development/production
+# - Features: Secure credential handling, environment isolation
+python-dotenv>=1.0.0
+
+# ==========================================
+# HTTP & WebSocket Support
+# ==========================================
+# Requests: Simple HTTP library for API calls and testing
+# - Needed for: Integration tests, health checks, external API calls
+# - Features: Simple API, connection pooling, SSL verification
+requests>=2.31.0
+
+# WebSockets: WebSocket client library for testing
+# - Needed for: Integration testing of WebSocket connections
+# - Features: Async support, protocol compliance, ping/pong
+websockets>=11.0.0
+
+# ==========================================
+# Browser Testing & Automation
+# ==========================================
+# Playwright: Browser automation for end-to-end testing
+# - Needed for: Browser instrumented tests, UI testing, real user simulation
+# - Features: Multi-browser support, auto-wait, network interception
+playwright==1.55.0
+
+# Pytest-Playwright: Playwright integration for pytest
+# - Needed for: Browser test fixtures, page management, test isolation
+# - Features: Automatic browser setup, screenshot on failure, video recording
+pytest-playwright>=0.5.0
+
+# ==========================================
+# Development Tools
+# ==========================================
+# Pytest: Testing framework for unit and integration tests
+# - Needed for: Testing goal pipeline, API endpoints, LLM integrations
+# - Features: Fixtures, parametrized tests, async test support
+pytest>=7.4.0
+
+# Pytest-Asyncio: Async testing support for pytest
+# - Needed for: Testing async FastAPI endpoints, WebSocket connections, LLM streams
+# - Features: Async test fixtures, event loop management
+pytest-asyncio>=0.21.0

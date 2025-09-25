@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OnGoal - Goal-Aware Chat Interface</title>
+    
+    <!-- Vue.js 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    
+    <!-- D3.js for visualizations -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    
+    <!-- Socket.io client -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Custom styles -->
+    <style>
+        .goal-glyph {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            margin-left: 8px;
+            position: relative;
+            top: 2px;
+        }
+        
+        .goal-question { background-color: #3b82f6; }
+        .goal-request { background-color: #10b981; }
+        .goal-offer { background-color: #f59e0b; }
+        .goal-suggestion { background-color: #dc2626; }
+        
+        .pipeline-toggle {
+            transition: all 0.2s ease;
+        }
+        
+        .pipeline-toggle.active {
+            background-color: #10b981;
+            color: white;
+        }
+        
+        .chat-message {
+            animation: slideIn 0.3s ease;
+        }
+        
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .goals-panel {
+            max-height: calc(100vh - 200px);
+            overflow-y: auto;
+        }
+        
+        .scrollbar-thin::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .scrollbar-thin::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+        
+        .scrollbar-thin::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 3px;
+        }
+        
+        /* Timeline Visualization Styles */
+        .timeline-visualization {
+            font-size: 12px;
+        }
+        
+        .timeline-turn {
+            border-left: 2px solid #e5e7eb;
+            padding-left: 12px;
+            position: relative;
+        }
+        
+        .timeline-turn::before {
+            content: '';
+            position: absolute;
+            left: -5px;
+            top: 0;
+            width: 8px;
+            height: 8px;
+            background: #3b82f6;
+            border-radius: 50%;
+        }
+        
+        .timeline-node {
+            background: #f3f4f6;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 11px;
+            max-width: 120px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        .timeline-connection-keep {
+            border-top: 2px solid #10b981;
+        }
+        
+        .timeline-connection-combine {
+            border-top: 2px dashed #f59e0b;
+        }
+        
+        .timeline-connection-replace {
+            border-top: 2px dotted #dc2626;
+        }
+        
+        .timeline-evaluation-confirm {
+            color: #10b981;
+            background: #ecfdf5;
+            border: 1px solid #d1fae5;
+        }
+        
+        .timeline-evaluation-contradict {
+            color: #dc2626;
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+        }
+        
+        .timeline-evaluation-ignore {
+            color: #f59e0b;
+            background: #fffbeb;
+            border: 1px solid #fed7aa;
+        }
+        
+        .timeline-turn-icon {
+            transition: all 0.2s ease;
+        }
+        
+        .timeline-turn-icon:hover {
+            transform: scale(1.1);
+        }
+        
+        .timeline-tooltip {
+            position: absolute;
+            background: #1f2937;
+            color: white;
+            padding: 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            max-width: 200px;
+            z-index: 50;
+            word-wrap: break-word;
+        }
+        
+        .chat-message.highlighted {
+            background-color: #dbeafe;
+            border: 2px solid #3b82f6;
+            transition: all 0.3s ease;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div id="app" class="h-screen flex flex-col">
+        <!-- Header -->
+        <header class="bg-white border-b border-gray-200 px-6 py-4">
+            <div class="flex items-center justify-between">
+                <h1 class="text-2xl font-bold text-gray-900">OnGoal</h1>
+                
+                <!-- Pipeline Controls & Legend -->
+                <div class="flex items-center space-x-6">
+                    <!-- Goal Legend -->
+                    <div class="flex items-center space-x-3">
+                        <span class="text-sm text-gray-600">Goals:</span>
+                        <div class="flex items-center space-x-2 text-xs">
+                            <div class="flex items-center space-x-1">
+                                <div class="goal-glyph goal-question"></div>
+                                <span class="text-gray-600">Question</span>
+                            </div>
+                            <div class="flex items-center space-x-1">
+                                <div class="goal-glyph goal-request"></div>
+                                <span class="text-gray-600">Request</span>
+                            </div>
+                            <div class="flex items-center space-x-1">
+                                <div class="goal-glyph goal-offer"></div>
+                                <span class="text-gray-600">Offer</span>
+                            </div>
+                            <div class="flex items-center space-x-1">
+                                <div class="goal-glyph goal-suggestion"></div>
+                                <span class="text-gray-600">Suggestion</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Pipeline Controls -->
+                    <div class="flex items-center space-x-4">
+                        <span class="text-sm text-gray-600">Pipeline:</span>
+                        <button 
+                            v-for="stage in ['infer', 'merge', 'evaluate']"
+                            :key="stage"
+                            @click="togglePipeline(stage)"
+                            :class="[
+                                'px-3 py-1 rounded text-sm font-medium pipeline-toggle',
+                                pipelineSettings[stage] ? 'active' : 'bg-gray-200 text-gray-700'
+                            ]"
+                        >
+                            {{ stage.charAt(0).toUpperCase() + stage.slice(1) }}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+        
+        <!-- Main Content -->
+        <div class="flex-1 flex overflow-hidden">
+            <!-- Chat Interface -->
+            <div class="flex-1 flex flex-col">
+                <!-- Messages Area -->
+                <div 
+                    ref="messagesContainer"
+                    class="flex-1 overflow-y-auto p-6 space-y-4 scrollbar-thin"
+                >
+                    <div 
+                        v-for="message in messages" 
+                        :key="message.id"
+                        class="chat-message"
+                    >
+                        <!-- User Message -->
+                        <div v-if="message.role === 'user'" class="flex justify-end">
+                            <div class="max-w-3xl">
+                                <div class="bg-blue-600 text-white rounded-lg px-4 py-2 inline-block">
+                                    {{ message.content }}
+                                    <!-- Goal Glyphs -->
+                                    <span v-for="goal in message.goals" :key="goal.id">
+                                        <span 
+                                            :class="'goal-glyph goal-' + goal.type"
+                                            :title="goal.text"
+                                        ></span>
+                                    </span>
+                                </div>
+                                <div class="text-xs text-gray-500 mt-1 text-right">
+                                    {{ formatTime(message.timestamp) }}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Assistant Message -->
+                        <div v-else class="flex justify-start">
+                            <div class="max-w-3xl">
+                                <div class="bg-white border border-gray-200 rounded-lg px-4 py-2">
+                                    <div v-html="formatMessage(message.content)"></div>
+                                </div>
+                                <!-- Goal Glyphs with Evaluation Results -->
+                                <div v-if="goals.length > 0" class="mt-2 flex flex-wrap gap-1">
+                                    <span 
+                                        v-for="goal in goals" 
+                                        :key="goal.id"
+                                        :class="[
+                                            'goal-glyph goal-' + goal.type,
+                                            goal.status === 'confirm' ? 'ring-2 ring-green-500' :
+                                            goal.status === 'contradict' ? 'ring-2 ring-red-500' :
+                                            goal.status === 'ignore' ? 'ring-2 ring-yellow-500' : ''
+                                        ]"
+                                        :title="`${goal.text} (${goal.status || 'pending'})`"
+                                    ></span>
+                                </div>
+                                <div class="text-xs text-gray-500 mt-1">
+                                    {{ formatTime(message.timestamp) }}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Streaming indicator -->
+                    <div v-if="isStreaming" class="flex justify-start">
+                        <div class="bg-white border border-gray-200 rounded-lg px-4 py-2">
+                            <div class="flex items-center space-x-2">
+                                <div class="animate-pulse">Thinking...</div>
+                                <div class="flex space-x-1">
+                                    <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0ms"></div>
+                                    <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 150ms"></div>
+                                    <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 300ms"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Input Area - Fixed at bottom -->
+                <div class="flex-shrink-0 border-t border-gray-200 bg-white p-6">
+                    <div class="flex space-x-4">
+                        <input
+                            v-model="currentMessage"
+                            @keydown.enter="sendMessage"
+                            :disabled="isStreaming"
+                            type="text"
+                            placeholder="Type your message..."
+                            class="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
+                        >
+                        <button
+                            @click="sendMessage"
+                            :disabled="isStreaming || !currentMessage.trim()"
+                            class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            Send
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Right Sidebar -->
+            <div class="w-80 bg-white border-l border-gray-200 flex flex-col">
+                <!-- Tabs -->
+                <div class="flex border-b border-gray-200">
+                    <button 
+                        v-for="tab in ['Goals', 'Timeline', 'Events']"
+                        :key="tab"
+                        @click="activeTab = tab"
+                        :class="[
+                            'flex-1 py-3 px-4 text-sm font-medium',
+                            activeTab === tab 
+                                ? 'text-blue-600 border-b-2 border-blue-600' 
+                                : 'text-gray-500 hover:text-gray-700'
+                        ]"
+                    >
+                        {{ tab }}
+                    </button>
+                </div>
+                
+                <!-- Tab Content - Scrollable -->
+                <div class="flex-1 overflow-y-auto p-4 scrollbar-thin">
+                    <!-- Goals Tab -->
+                    <div v-if="activeTab === 'Goals'">
+                        <div v-if="goals.length === 0" class="text-gray-500 text-center py-8">
+                            No goals detected yet.<br>
+                            Start a conversation to see extracted goals.
+                        </div>
+                        
+                        <div v-else class="space-y-3">
+                            <div 
+                                v-for="goal in goals" 
+                                :key="goal.id"
+                                class="bg-gray-50 rounded-lg p-3 border border-gray-200"
+                            >
+                                <div class="flex items-start justify-between">
+                                    <div class="flex-1">
+                                        <div class="flex items-center space-x-2 mb-2">
+                                            <span 
+                                                :class="'goal-glyph goal-' + goal.type"
+                                            ></span>
+                                            <span class="text-xs font-medium text-gray-500 uppercase">
+                                                {{ goal.type }}
+                                            </span>
+                                            <span class="text-xs text-gray-400">
+                                                {{ goal.id }}
+                                            </span>
+                                        </div>
+                                        <p class="text-sm text-gray-900">{{ goal.text }}</p>
+                                        
+                                        <!-- Goal Status -->
+                                        <div v-if="goal.status" class="mt-2">
+                                            <span 
+                                                :class="[
+                                                    'inline-block px-2 py-1 rounded text-xs font-medium',
+                                                    goal.status === 'confirm' ? 'bg-green-100 text-green-800' :
+                                                    goal.status === 'contradict' ? 'bg-red-100 text-red-800' :
+                                                    'bg-gray-100 text-gray-800'
+                                                ]"
+                                            >
+                                                {{ goal.status }}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Goal Controls -->
+                                    <div class="flex flex-col space-y-1 ml-2">
+                                        <button 
+                                            @click="toggleGoalLock(goal)"
+                                            :class="[
+                                                'text-xs px-2 py-1 rounded',
+                                                goal.locked ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-600'
+                                            ]"
+                                        >
+                                            {{ goal.locked ? 'Locked' : 'Lock' }}
+                                        </button>
+                                        <button 
+                                            @click="toggleGoalComplete(goal)"
+                                            :class="[
+                                                'text-xs px-2 py-1 rounded',
+                                                goal.completed ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+                                            ]"
+                                        >
+                                            {{ goal.completed ? 'Done' : 'Complete' }}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Timeline Tab -->
+                    <div v-else-if="activeTab === 'Timeline'" class="timeline-container">
+                        <!-- Timeline Empty State -->
+                        <div v-if="timelineData.length === 0" class="timeline-empty-state text-gray-500 text-center py-8">
+                            <div class="mb-2">📊</div>
+                            <div>No goals yet</div>
+                            <small>Send a message to see goal timeline</small>
+                        </div>
+                        
+                        <!-- Timeline Visualization -->
+                        <div v-else class="timeline-visualization">
+                            <!-- Timeline Turn for each conversation -->
+                            <div 
+                                v-for="turn in timelineData" 
+                                :key="turn.turnNumber"
+                                class="timeline-turn mb-6"
+                                :data-turn="turn.turnNumber"
+                            >
+                                <!-- Turn Header with Navigation Icon -->
+                                <div class="flex items-center mb-3">
+                                    <button 
+                                        @click="navigateToMessage(turn.turnNumber)"
+                                        class="timeline-turn-icon w-8 h-8 bg-blue-500 text-white rounded-full text-sm font-medium hover:bg-blue-600"
+                                        :data-turn="turn.turnNumber"
+                                    >
+                                        {{ turn.turnNumber }}
+                                    </button>
+                                    <div class="ml-2 text-sm text-gray-600">
+                                        Turn {{ turn.turnNumber }}
+                                    </div>
+                                </div>
+                                
+                                <!-- Row 1: Infer Goals -->
+                                <div class="timeline-row-infer mb-2">
+                                    <div class="text-xs text-gray-500 mb-1">1. Infer</div>
+                                    <div class="flex flex-wrap gap-2">
+                                        <div 
+                                            v-for="goal in turn.inferredGoals" 
+                                            :key="goal.id"
+                                            class="timeline-node bg-blue-100 border border-blue-300 rounded px-2 py-1 text-xs"
+                                            :title="goal.text"
+                                        >
+                                            {{ goal.id }}: {{ truncateText(goal.text, 50) }}
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Row 2: Merge Results (Final Goals) -->
+                                <div class="timeline-row-merge mb-2">
+                                    <div class="text-xs text-gray-500 mb-1">2. Merge</div>
+                                    <div class="flex flex-wrap gap-2">
+                                        <div 
+                                            v-for="goal in turn.finalGoals" 
+                                            :key="goal.id"
+                                            class="timeline-node relative"
+                                            :class="getGoalNodeClass(goal)"
+                                            :title="goal.text"
+                                        >
+                                            <!-- Connection Lines -->
+                                            <div 
+                                                v-if="goal.operation"
+                                                :class="getConnectionClass(goal.operation)"
+                                                class="absolute -top-1 -left-1 w-2 h-2"
+                                            ></div>
+                                            
+                                            {{ goal.id }}: {{ truncateText(goal.text, 50) }}
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Row 3: Evaluate Results -->
+                                <div class="timeline-row-evaluate">
+                                    <div class="text-xs text-gray-500 mb-1">3. Evaluate</div>
+                                    <div class="flex flex-wrap gap-2">
+                                        <div 
+                                            v-for="evaluation in turn.evaluations" 
+                                            :key="evaluation.goalId"
+                                            class="timeline-evaluation-icon flex items-center"
+                                            :class="getEvaluationClass(evaluation.result)"
+                                            :title="`${evaluation.goalId}: ${evaluation.result} - ${evaluation.explanation}`"
+                                        >
+                                            <span class="mr-1">{{ getEvaluationIcon(evaluation.result) }}</span>
+                                            <span class="text-xs">{{ evaluation.goalId }}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Timeline Navigation Controls (for long conversations) -->
+                        <div v-if="timelineData.length > 5" class="timeline-navigation-controls mt-4 flex justify-center space-x-2">
+                            <button 
+                                @click="scrollTimeline('top')"
+                                class="px-3 py-1 bg-gray-100 text-gray-600 rounded text-xs hover:bg-gray-200"
+                            >
+                                ↑ Top
+                            </button>
+                            <button 
+                                @click="scrollTimeline('bottom')"
+                                class="px-3 py-1 bg-gray-100 text-gray-600 rounded text-xs hover:bg-gray-200"
+                            >
+                                ↓ Bottom
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Events Tab -->
+                    <div v-else class="text-gray-500 text-center py-8">
+                        Events tracking<br>
+                        <small>(Coming in Phase 3)</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
