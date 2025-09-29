@@ -41,7 +41,6 @@ The Timeline tab displays the complete goal processing pipeline across conversat
 - [API Key Setup](#-api-key-setup)
 - [Running OnGoal](#-running-ongoal)
 - [Testing](#-testing)
-- [Architecture](#-architecture)
 - [Contributing](#-contributing)
 - [Research Background](#-research-background)
 - [License](#-license)
