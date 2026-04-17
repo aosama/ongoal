@@ -1,0 +1,33 @@
+- generic [ref=e2]:
+  - banner [ref=e3]:
+    - generic [ref=e4]:
+      - heading "OnGoal" [level=1] [ref=e5]
+      - generic [ref=e6]:
+        - generic [ref=e7]: Ollama (local)
+        - generic [ref=e8]: gemma4:latest
+        - generic [ref=e9]: free
+      - generic [ref=e10]:
+        - generic [ref=e11]:
+          - generic [ref=e12]: "Goals:"
+          - generic [ref=e13]:
+            - generic [ref=e16]: Question
+            - generic [ref=e19]: Request
+            - generic [ref=e22]: Offer
+            - generic [ref=e25]: Suggestion
+        - generic [ref=e26]:
+          - generic [ref=e27]: "Pipeline:"
+          - button "Infer" [ref=e28] [cursor=pointer]
+          - button "Merge" [ref=e29] [cursor=pointer]
+          - button "Evaluate" [ref=e30] [cursor=pointer]
+  - generic [ref=e31]:
+    - generic [ref=e35]:
+      - textbox "Type your message..." [ref=e36]
+      - button "Send" [disabled] [ref=e37]
+    - generic [ref=e38]:
+      - generic [ref=e39]:
+        - button "Goals" [ref=e40] [cursor=pointer]
+        - button "Timeline" [ref=e41] [cursor=pointer]
+        - button "Events" [ref=e42] [cursor=pointer]
+      - generic [ref=e45]:
+        - text: No goals detected yet.
+        - text: Start a conversation to see extracted goals.

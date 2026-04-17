@@ -1,0 +1,77 @@
+Appendix A LLM Prompts
+A.1. Infer goals
+?
+1You will be presented with human dialogue in a conversation with you, an assistant. Your task is to extract every clause verbatim from the document exactly as it appears. 
+2 
+3List all clauses in the dialogue that are either a question, request, offer, or suggestion. Briefly summarize how to address the goal of the clause in ONE sentence. 
+4 
+5Please respond ONLY with a valid JSON in the following format: 
+6 
+7{{ 
+8 "clauses": [ 
+9 {{"clause": "<CLAUSE_1>", "type": "<TYPE_1>", "summary": "<SUMMARY_1>"}}, 
+10 {{"clause": "<CLAUSE_2>", "type": "<TYPE_2>", "summary": "<SUMMARY_2>"}}, 
+11 ] 
+12}} 
+A.2. Merge goals
+Input parameters:
+* � 
+old_goals_str_list � A newline-delimited string list of numbered goals. Example: �1. � \n 2. ��
+* � 
+new_goals_str_list � A newline-delimited string list of numbered goals. Example: �1. � \n 2. ��
+?
+1You have one set of old numbered bullet point goals: 
+2{old_goals_str_list} 
+3 
+4You have another set of new numbered bullet point goals: 
+5{new_goals_str_list} 
+6 
+7Merge the two lists of bullet point goals into a single updated list of goals. Use the following three operations as rules to perform the merge: 
+8 
+9* Replace: If a new goal contradicts an old goal, replace the old goal with the new goal. List the number of the old goal, then the number of the new goal. 
+10* Combine: If a new goal is similar to an old goal, combine the old goal and the new goal into a new combined goal. List the number of the old goal, then the number of the new goal. 
+11* Keep: If a goal is unique, keep that goal in the updated list. List the original number of the goal. 
+12 
+13Please respond ONLY with a valid JSON in the following format: 
+14 
+15{{ 
+16 "operations": [ 
+17 {{ 
+18 "updated_goal": "<GOAL_1>", 
+19 "operation": "<OPERATION_1>", 
+20 "goal_numbers": ["<GOAL_NUMBER_1>", "<GOAL_NUMBER_2>"] 
+21 }}, 
+22 {{ 
+23 "updated_goal": "<GOAL_2>", 
+24 "operation": "<OPERATION_2>", 
+25 "goal_numbers": ["<GOAL_NUMBER_1>", "<GOAL_NUMBER_2>"] 
+26 }}, 
+27 ] 
+28}} 
+A.3. Evaluate goals
+Input parameters:
+* � 
+goal_str � A string representing a conversational goal. Example: �Use figurative language.�
+?
+1You will be presented with human dialogue and a response from you, an assistant. Your task is to evaluate the assistant response in terms of the following conversational goal: {goal_str} 
+2 
+3Categorize how the assistant response addresses the goal in one of three categories. The categories are confirm, contradict, or ignore. Explain the relationship between the response and the goal in ONE sentence. Extract clauses verbatim from the response exactly as they appear as examples that show evidence to support your explanation. 
+4 
+5Please respond ONLY with a valid JSON in the following format: 
+6 
+7{{ 
+8 "category": "<CATEGORY_1>", 
+9 "explanation": "<EXPLANATION_1>", 
+10 "examples": ["<EXAMPLE_1>", "<EXAMPLE_2>"] 
+11}} 
+A.4. Keyphrase extraction
+?
+1You will be given an assistant response. Your task is to extract every phrase verbatim from the response exactly as it appears. 
+2 
+3List the phrases that capture the most salient topics of the response. 
+4 
+5Please respond ONLY with a valid JSON in the following format: 
+6 
+7{{ 
+8 "keyphrases": ["<KEYPHRASE_1>", "<KEYPHRASE_2>"] 
+9}} 

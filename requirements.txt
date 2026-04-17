@@ -17,16 +17,16 @@ uvicorn[standard]>=0.24.0
 # ==========================================
 # Real-time Communication & WebSockets
 # ==========================================
-# Python-SocketIO: WebSocket implementation for real-time bidirectional communication
-# - Needed for: Streaming LLM responses, real-time goal updates, live pipeline results
-# - Features: Room management, event-based messaging, fallback to polling
-python-socketio>=5.10.0
+# WebSockets: WebSocket client library for testing
+# - Needed for: Integration testing of WebSocket connections
+# - Features: Async support, protocol compliance, ping/pong
+websockets>=11.0.0
 
 # ==========================================
-# LLM Integration - Anthropic Claude
+# LLM Integration
 # ==========================================
-# Anthropic: Official SDK for Claude LLM integration
-# - Needed for: Chat LLM conversations, goal inference/merging/evaluation pipeline
+# Anthropic: Official SDK for Claude LLM (one of the supported providers)
+# - Needed for: Anthropic provider (optional, paid)
 # - Features: Streaming responses, structured outputs, function calling
 anthropic>=0.40.0
 
@@ -50,15 +50,15 @@ python-dotenv>=1.0.0
 # ==========================================
 # HTTP & WebSocket Support
 # ==========================================
+# Httpx: Modern async HTTP client
+# - Needed for: Ollama provider, OpenRouter provider, external API calls
+# - Features: Async support, streaming, connection pooling
+httpx>=0.27.0
+
 # Requests: Simple HTTP library for API calls and testing
 # - Needed for: Integration tests, health checks, external API calls
 # - Features: Simple API, connection pooling, SSL verification
 requests>=2.31.0
-
-# WebSockets: WebSocket client library for testing
-# - Needed for: Integration testing of WebSocket connections
-# - Features: Async support, protocol compliance, ping/pong
-websockets>=11.0.0
 
 # ==========================================
 # Browser Testing & Automation

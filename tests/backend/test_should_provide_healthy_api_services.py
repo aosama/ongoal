@@ -42,8 +42,8 @@ class TestAPIInfrastructure:
                 }
                 await websocket.send(json.dumps(test_message))
 
-                # Wait for response with timeout
-                response = await asyncio.wait_for(websocket.recv(), timeout=10.0)
+                # Wait for response with generous timeout (LLM processing takes time)
+                response = await asyncio.wait_for(websocket.recv(), timeout=30.0)
                 response_data = json.loads(response)
 
                 # Verify we got a valid response

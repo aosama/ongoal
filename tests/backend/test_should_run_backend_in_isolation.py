@@ -63,13 +63,13 @@ class TestBackendIsolated:
     def test_conversation_model_creation(self):
         """Test Conversation model creation"""
         conversation = Conversation(id="test_conv")
-        
+
         assert conversation.id == "test_conv"
         assert len(conversation.messages) == 0
         assert len(conversation.goals) == 0
-        assert conversation.pipeline_settings["infer"] is True
-        assert conversation.pipeline_settings["merge"] is True
-        assert conversation.pipeline_settings["evaluate"] is True
+        assert conversation.pipeline_settings.infer is True
+        assert conversation.pipeline_settings.merge is True
+        assert conversation.pipeline_settings.evaluate is True
         
     def test_conversation_with_messages_and_goals(self):
         """Test Conversation with messages and goals"""
@@ -122,31 +122,33 @@ class TestBackendIsolated:
             source_message_id="msg_ser",
             created_at="2024-01-01T12:00:00"
         )
-        
+
         goal_dict = goal.model_dump()
-        
-        expected_keys = {"id", "text", "type", "status", "locked", "completed", "source_message_id", "created_at"}
-        assert set(goal_dict.keys()) == expected_keys
+
+        # Core fields must always be present
+        core_keys = {"id", "text", "type", "status", "locked", "completed",
+                      "source_message_id", "created_at", "summary"}
+        assert core_keys.issubset(set(goal_dict.keys()))
         assert goal_dict["id"] == "ser_test"
         assert goal_dict["text"] == "Serialize this goal"
         assert goal_dict["type"] == "suggestion"
         assert goal_dict["status"] == "ignored"
-        
+
     def test_pipeline_settings_modification(self):
         """Test modifying pipeline settings"""
         conversation = Conversation(id="pipeline_test")
-        
+
         # Disable merge stage
-        conversation.pipeline_settings["merge"] = False
-        assert conversation.pipeline_settings["merge"] is False
-        assert conversation.pipeline_settings["infer"] is True
-        assert conversation.pipeline_settings["evaluate"] is True
-        
+        conversation.pipeline_settings.merge = False
+        assert conversation.pipeline_settings.merge is False
+        assert conversation.pipeline_settings.infer is True
+        assert conversation.pipeline_settings.evaluate is True
+
         # Disable all stages
-        conversation.pipeline_settings = {
-            "infer": False,
-            "merge": False,
-            "evaluate": False
-        }
-        
-        assert all(not value for value in conversation.pipeline_settings.values())
+        conversation.pipeline_settings.infer = False
+        conversation.pipeline_settings.merge = False
+        conversation.pipeline_settings.evaluate = False
+
+        assert not conversation.pipeline_settings.infer
+        assert not conversation.pipeline_settings.merge
+        assert not conversation.pipeline_settings.evaluate

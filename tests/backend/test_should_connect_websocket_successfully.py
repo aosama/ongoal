@@ -11,12 +11,12 @@ import pytest
 
 @pytest.mark.asyncio
 @pytest.mark.integration
-async def test_should_connect_to_websocket_directly(backend_url):
-    """Test direct WebSocket connection to backend"""
+async def test_should_connect_to_websocket_directly(backend_server):
+    """Test direct WebSocket connection to backend (requires running server)"""
     
     try:
         # Connect to WebSocket endpoint
-        ws_url = backend_url.replace("http://", "ws://").replace("https://", "wss://")
+        ws_url = "http://localhost:8000".replace("http://", "ws://").replace("https://", "wss://")
         uri = f"{ws_url}/ws"
         print(f"🔗 Attempting direct WebSocket connection to {uri}")
 

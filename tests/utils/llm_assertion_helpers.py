@@ -1,255 +1,230 @@
 """
 LLM-based assertion helpers for semantic testing
 
-Uses Claude Haiku to make intelligent assertions about goals and language
-instead of relying on exact keyword matching.
+Uses the configured LLM provider (Ollama/OpenRouter/Anthropic) to make
+intelligent assertions about goals and language instead of exact matching.
 """
 
 import json
 import os
-from anthropic import AsyncAnthropic
-from typing import List, Dict, Any
+from typing import List, Dict
+
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
 load_dotenv()
 
 
 class LLMAssertionResult:
     """Result of an LLM-based assertion"""
+
     def __init__(self, passed: bool, reason: str, confidence: str = "high"):
         self.passed = passed
         self.reason = reason
         self.confidence = confidence
-    
+
     def __str__(self):
-        return f"LLM Assertion: {'PASS' if self.passed else 'FAIL'} - {self.reason} (confidence: {self.confidence})"
+        status = "PASS" if self.passed else "FAIL"
+        return f"LLM Assertion: {status} - {self.reason} (confidence: {self.confidence})"
 
 
 class LLMAssertionHelper:
-    """Helper class for making LLM-based assertions in tests"""
-    
-    def __init__(self):
-        self.client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-        self.model = os.getenv("ANTHROPIC_MODEL")
-        if not self.model:
-            raise ValueError("ANTHROPIC_MODEL environment variable is required for test assertions")
-    
-    async def assert_goal_semantic_match(self, goals: List[Dict], expected_concept: str, context: str = "") -> LLMAssertionResult:
-        """
-        Assert that a list of goals contains a specific concept semantically
-        
-        Args:
-            goals: List of goal dictionaries with 'text' and 'type' fields
-            expected_concept: The concept to look for (e.g., "make the story shorter")
-            context: Additional context for the assertion
-        
-        Returns:
-            LLMAssertionResult with pass/fail and reason
-        """
-        
-        goals_text = "\n".join([f"- [{goal.get('type', 'unknown')}] {goal.get('text', '')}" for goal in goals])
-        
+    """Helper class for LLM-based assertions using any provider"""
+
+    async def _ask_llm(self, prompt: str, max_tokens: int = 512) -> str:
+        """Send a prompt to the LLM and return the text response"""
+        from backend.llm_provider import get_provider
+
+        provider = get_provider()
+        return await provider.generate(prompt, max_tokens=max_tokens)
+
+    async def assert_goal_semantic_match(
+        self, goals: List[Dict], expected_concept: str, context: str = ""
+    ) -> LLMAssertionResult:
+        """Assert that goals contain a specific concept semantically"""
+        goals_text = "\n".join(
+            [f"- [{g.get('type', 'unknown')}] {g.get('text', '')}" for g in goals]
+        )
+
         prompt = f"""You are evaluating whether a list of goals contains a specific concept.
 
-CONTEXT: {context if context else "Testing goal extraction and merging in a conversational AI system."}
+CONTEXT: {context or "Testing goal extraction and merging in a conversational AI system."}
 
 GOALS TO EVALUATE:
 {goals_text}
 
 EXPECTED CONCEPT: "{expected_concept}"
 
-TASK: Determine if any of the goals semantically captures or relates to the expected concept. Consider:
-- Exact matches
-- Paraphrases and synonyms  
-- Combined/merged goals that incorporate the concept
-- Related concepts that serve the same purpose
+TASK: Determine if any of the goals semantically captures the expected concept.
 
-Respond ONLY with valid JSON in this format:
-{{
-  "passed": true/false,
-  "reason": "Brief explanation of your decision",
-  "confidence": "high/medium/low"
-}}"""
+Respond ONLY with valid JSON:
+{{"passed": true/false, "reason": "Brief explanation", "confidence": "high/medium/low"}}"""
 
-        try:
-            response = await self.client.messages.create(
-                model=self.model,
-                max_tokens=200,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            
-            response_text = response.content[0].text.strip()
-            
-            # Parse JSON response
-            if response_text.startswith("```json"):
-                response_text = response_text.replace("```json", "").replace("```", "").strip()
-            
-            result_data = json.loads(response_text)
-            
-            return LLMAssertionResult(
-                passed=result_data.get("passed", False),
-                reason=result_data.get("reason", "No reason provided"),
-                confidence=result_data.get("confidence", "unknown")
-            )
-            
-        except Exception as e:
-            # Fallback to conservative assertion
-            return LLMAssertionResult(
-                passed=False,
-                reason=f"LLM assertion failed due to error: {str(e)}",
-                confidence="low"
-            )
-    
-    async def assert_goal_preserved_through_merge(self, 
-                                                original_goals: List[Dict],
-                                                new_goals: List[Dict], 
-                                                merged_goals: List[Dict],
-                                                target_concept: str) -> LLMAssertionResult:
-        """
-        Assert that a concept from new_goals is preserved in the merged result
-        
-        Args:
-            original_goals: The initial goals before merge
-            new_goals: The new goals being merged in
-            merged_goals: The final merged result
-            target_concept: The concept that should be preserved
-        
-        Returns:
-            LLMAssertionResult with pass/fail and reason
-        """
-        
-        original_text = "\n".join([f"- [{g.get('type', 'unknown')}] {g.get('text', '')}" for g in original_goals])
-        new_text = "\n".join([f"- [{g.get('type', 'unknown')}] {g.get('text', '')}" for g in new_goals])
-        merged_text = "\n".join([f"- [{g.get('type', 'unknown')}] {g.get('text', '')}" for g in merged_goals])
-        
-        prompt = f"""You are evaluating a goal merging operation to ensure important concepts are preserved.
+        return await self._evaluate(prompt)
 
-TARGET CONCEPT TO PRESERVE: "{target_concept}"
+    async def assert_goal_preserved_through_merge(
+        self,
+        original_goals: List[Dict],
+        new_goals: List[Dict],
+        merged_goals: List[Dict],
+        target_concept: str,
+    ) -> LLMAssertionResult:
+        """Assert that a concept is preserved through merge"""
+        original_text = "\n".join(
+            [f"- [{g.get('type', 'unknown')}] {g.get('text', '')}" for g in original_goals]
+        )
+        new_text = "\n".join(
+            [f"- [{g.get('type', 'unknown')}] {g.get('text', '')}" for g in new_goals]
+        )
+        merged_text = "\n".join(
+            [f"- [{g.get('type', 'unknown')}] {g.get('text', '')}" for g in merged_goals]
+        )
+
+        prompt = f"""You are evaluating a goal merging operation.
+
+TARGET CONCEPT: "{target_concept}"
 
 ORIGINAL GOALS:
 {original_text}
 
-NEW GOALS BEING MERGED:
+NEW GOALS:
 {new_text}
 
-FINAL MERGED GOALS:
+MERGED GOALS:
 {merged_text}
 
-TASK: Determine if the target concept from the new goals is properly preserved in the merged result. The concept may be:
-- Kept as a separate goal
-- Combined with an existing similar goal
-- Integrated into an existing goal's text
+Is the target concept preserved in the merged result? It may be kept, combined, or integrated — but not lost.
 
-The concept should NOT be completely lost unless there's a valid reason (e.g., direct contradiction).
+Respond ONLY with valid JSON:
+{{"passed": true/false, "reason": "Explanation", "confidence": "high/medium/low"}}"""
 
-Respond ONLY with valid JSON in this format:
-{{
-  "passed": true/false,
-  "reason": "Explanation of whether and how the concept was preserved",
-  "confidence": "high/medium/low"
-}}"""
+        return await self._evaluate(prompt)
 
-        try:
-            response = await self.client.messages.create(
-                model=self.model,
-                max_tokens=300,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            
-            response_text = response.content[0].text.strip()
-            
-            # Parse JSON response
-            if response_text.startswith("```json"):
-                response_text = response_text.replace("```json", "").replace("```", "").strip()
-            
-            result_data = json.loads(response_text)
-            
-            return LLMAssertionResult(
-                passed=result_data.get("passed", False),
-                reason=result_data.get("reason", "No reason provided"),
-                confidence=result_data.get("confidence", "unknown")
-            )
-            
-        except Exception as e:
-            # Fallback to conservative assertion
-            return LLMAssertionResult(
-                passed=False,
-                reason=f"LLM assertion failed due to error: {str(e)}",
-                confidence="low"
-            )
+    async def assert_goals_capture_message_intent(
+        self, message: str, goals: List[Dict], expected_intents: List[str]
+    ) -> LLMAssertionResult:
+        """Assert that extracted goals capture intended meanings"""
+        goals_text = "\n".join(
+            [f"- [{g.get('type', 'unknown')}] {g.get('text', '')}" for g in goals]
+        )
+        intents_text = "\n".join([f"- {i}" for i in expected_intents])
 
-    async def assert_goals_capture_message_intent(self, 
-                                                message: str,
-                                                goals: List[Dict],
-                                                expected_intents: List[str]) -> LLMAssertionResult:
-        """
-        Assert that extracted goals properly capture the intended meanings from a message
-        
-        Args:
-            message: The original user message
-            goals: The extracted goals
-            expected_intents: List of intents that should be captured
-        
-        Returns:
-            LLMAssertionResult with pass/fail and reason
-        """
-        
-        goals_text = "\n".join([f"- [{g.get('type', 'unknown')}] {g.get('text', '')}" for g in goals])
-        intents_text = "\n".join([f"- {intent}" for intent in expected_intents])
-        
-        prompt = f"""You are evaluating whether extracted goals properly capture the user's intended meanings.
+        prompt = f"""Evaluate whether extracted goals capture the expected intents.
 
-USER MESSAGE:
-"{message}"
+MESSAGE: "{message}"
 
 EXTRACTED GOALS:
 {goals_text}
 
-EXPECTED INTENTS TO CAPTURE:
+EXPECTED INTENTS:
 {intents_text}
 
-TASK: Determine if the extracted goals adequately capture all the expected intents from the user message. Consider:
-- Are the main requests/questions/suggestions identified?
-- Are important details and constraints preserved?
-- Is the overall intent correctly understood?
+Do the goals capture the expected intents?
 
-Respond ONLY with valid JSON in this format:
-{{
-  "passed": true/false,
-  "reason": "Explanation of how well the goals capture the intended meanings",
-  "confidence": "high/medium/low"
-}}"""
+Respond ONLY with valid JSON:
+{{"passed": true/false, "reason": "Explanation", "confidence": "high/medium/low"}}"""
+
+        return await self._evaluate(prompt)
+
+    async def _evaluate(self, prompt: str, max_retries: int = 2) -> LLMAssertionResult:
+        """Send prompt to LLM and parse the JSON response, with retries for transient errors"""
+        import httpx
+
+        for attempt in range(max_retries + 1):
+            try:
+                response_text = await self._ask_llm(prompt)
+                if not response_text.strip():
+                    if attempt < max_retries:
+                        continue
+                    return LLMAssertionResult(
+                        passed=False, reason="LLM returned empty response", confidence="low"
+                    )
+                # Strip markdown code fences if present
+                if response_text.startswith("```"):
+                    response_text = (
+                        response_text.replace("```json", "").replace("```", "").strip()
+                    )
+                result_data = self._parse_json_response(response_text)
+                return LLMAssertionResult(
+                    passed=result_data.get("passed", False),
+                    reason=result_data.get("reason", "No reason provided"),
+                    confidence=result_data.get("confidence", "unknown"),
+                )
+            except httpx.HTTPStatusError as e:
+                if attempt < max_retries and e.response.status_code in (429, 500, 502, 503, 504):
+                    import asyncio
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                return LLMAssertionResult(
+                    passed=False,
+                    reason=f"LLM assertion failed: HTTP {e.response.status_code}",
+                    confidence="low",
+                )
+            except Exception as e:
+                if attempt < max_retries:
+                    import asyncio
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                return LLMAssertionResult(
+                    passed=False, reason=f"LLM assertion failed: {e}", confidence="low"
+                )
+
+    @staticmethod
+    def _parse_json_response(text: str) -> dict:
+        """Parse JSON from LLM response, with repair for truncated output"""
+        import re
+
+        # Try direct parse first
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # Strip trailing incomplete content and try to close the object
+        trimmed = text.rstrip()
+        # Remove trailing incomplete string/whitespace/comma
+        trimmed = re.sub(r'[,"]?\s*$', '', trimmed)
+        if not trimmed.endswith("}"):
+            trimmed += "}"
 
         try:
-            response = await self.client.messages.create(
-                model=self.model,
-                max_tokens=300,
-                messages=[{"role": "user", "content": prompt}]
+            return json.loads(trimmed)
+        except json.JSONDecodeError:
+            pass
+
+        # Last resort: extract all valid key-value pairs and rebuild
+        kv_pairs = re.findall(
+            r'"(passed|reason|confidence)"\s*:\s*"(?:[^"\\]|\\.)*"|'
+            r'"(passed|reason|confidence)"\s*:\s*(?:true|false|\d+)',
+            trimmed,
+        )
+        if kv_pairs:
+            # Flatten the tuples from findall groups
+            pairs = []
+            for match in kv_pairs:
+                pairs.append(match[0] or match[1])
+            # Just parse what we can from each match
+            all_pairs = re.findall(
+                r'"(passed|reason|confidence)"\s*:\s*(?:"((?:[^"\\]|\\.)*)"|(true|false|\d+))',
+                trimmed,
             )
-            
-            response_text = response.content[0].text.strip()
-            
-            # Parse JSON response  
-            if response_text.startswith("```json"):
-                response_text = response_text.replace("```json", "").replace("```", "").strip()
-            
-            result_data = json.loads(response_text)
-            
-            return LLMAssertionResult(
-                passed=result_data.get("passed", False),
-                reason=result_data.get("reason", "No reason provided"),
-                confidence=result_data.get("confidence", "unknown")
-            )
-            
-        except Exception as e:
-            # Fallback to conservative assertion
-            return LLMAssertionResult(
-                passed=False,
-                reason=f"LLM assertion failed due to error: {str(e)}",
-                confidence="low"
-            )
+            parts = []
+            for key, str_val, bare_val in all_pairs:
+                if str_val:
+                    parts.append(f'"{key}": "{str_val}"')
+                else:
+                    parts.append(f'"{key}": {bare_val}')
+            rebuilt = "{" + ", ".join(parts) + "}"
+            return json.loads(rebuilt)
+
+        raise json.JSONDecodeError("Could not parse LLM JSON response", text, 0)
 
 
-# Global helper instance for easy use in tests
-llm_assert = LLMAssertionHelper()
+# Lazy global instance — created on first access, not at import time
+llm_assert = None
+
+
+def get_llm_assert() -> LLMAssertionHelper:
+    global llm_assert
+    if llm_assert is None:
+        llm_assert = LLMAssertionHelper()
+    return llm_assert

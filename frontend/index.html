@@ -11,9 +11,6 @@
     <!-- D3.js for visualizations -->
     <script src="https://d3js.org/d3.v7.min.js"></script>
     
-    <!-- Socket.io client -->
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-    
     <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     
@@ -168,6 +165,15 @@
             <div class="flex items-center justify-between">
                 <h1 class="text-2xl font-bold text-gray-900">OnGoal</h1>
                 
+                <!-- LLM Provider Badge -->
+                <div v-if="llmStatus" class="flex items-center space-x-1 text-xs">
+                    <span :class="llmStatus.available ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'" class="px-2 py-1 rounded-full font-medium">
+                        {{ llmStatus.provider }}
+                    </span>
+                    <span class="text-gray-500">{{ llmStatus.model }}</span>
+                    <span v-if="llmStatus.cost === 'free'" class="bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded text-xs">free</span>
+                </div>
+                
                 <!-- Pipeline Controls & Legend -->
                 <div class="flex items-center space-x-6">
                     <!-- Goal Legend -->
@@ -253,17 +259,19 @@
                                 </div>
                                 <!-- Goal Glyphs with Evaluation Results -->
                                 <div v-if="goals.length > 0" class="mt-2 flex flex-wrap gap-1">
-                                    <span 
+                                    <button 
                                         v-for="goal in goals" 
                                         :key="goal.id"
+                                        @click="selectGoal(goal.id)"
                                         :class="[
-                                            'goal-glyph goal-' + goal.type,
+                                            'goal-glyph goal-' + goal.type + ' cursor-pointer hover:scale-125 transition-transform',
                                             goal.status === 'confirm' ? 'ring-2 ring-green-500' :
                                             goal.status === 'contradict' ? 'ring-2 ring-red-500' :
-                                            goal.status === 'ignore' ? 'ring-2 ring-yellow-500' : ''
+                                            goal.status === 'ignore' ? 'ring-2 ring-yellow-500' : '',
+                                            selectedGoalId === goal.id ? 'ring-2 ring-blue-500 scale-125' : ''
                                         ]"
                                         :title="`${goal.text} (${goal.status || 'pending'})`"
-                                    ></span>
+                                    ></button>
                                 </div>
                                 <div class="text-xs text-gray-500 mt-1">
                                     {{ formatTime(message.timestamp) }}
@@ -341,57 +349,70 @@
                             <div 
                                 v-for="goal in goals" 
                                 :key="goal.id"
-                                class="bg-gray-50 rounded-lg p-3 border border-gray-200"
+                                @click="selectGoal(goal.id)"
+                                :class="[
+                                    'rounded-lg p-3 border cursor-pointer transition-all',
+                                    selectedGoalId === goal.id 
+                                        ? 'bg-blue-50 border-blue-400 ring-1 ring-blue-400' 
+                                        : 'bg-gray-50 border-gray-200 hover:border-gray-300 hover:bg-gray-100'
+                                ]"
                             >
                                 <div class="flex items-start justify-between">
-                                    <div class="flex-1">
-                                        <div class="flex items-center space-x-2 mb-2">
+                                    <div class="flex-1 min-w-0">
+                                        <div class="flex items-center space-x-2 mb-1">
                                             <span 
                                                 :class="'goal-glyph goal-' + goal.type"
                                             ></span>
-                                            <span class="text-xs font-medium text-gray-500 uppercase">
+                                            <span :class="[
+                                                'text-xs font-semibold px-1.5 py-0.5 rounded',
+                                                goalTypeConfig(goal.type).bg + ' ' + goalTypeConfig(goal.type).text
+                                            ]">
                                                 {{ goal.type }}
                                             </span>
-                                            <span class="text-xs text-gray-400">
-                                                {{ goal.id }}
+                                            <span v-if="goal.status" :class="[
+                                                'text-xs font-medium px-1.5 py-0.5 rounded',
+                                                evalStyleFor(goal.status).bg + ' ' + evalStyleFor(goal.status).text
+                                            ]">
+                                                {{ evalStyleFor(goal.status).icon }} {{ goal.status }}
                                             </span>
+                                            <span v-if="goal.locked" class="text-xs bg-yellow-100 text-yellow-800 px-1.5 py-0.5 rounded">🔒</span>
+                                            <span v-if="goal.completed" class="text-xs bg-green-100 text-green-800 px-1.5 py-0.5 rounded">✓</span>
                                         </div>
-                                        <p class="text-sm text-gray-900">{{ goal.text }}</p>
-                                        
-                                        <!-- Goal Status -->
-                                        <div v-if="goal.status" class="mt-2">
-                                            <span 
-                                                :class="[
-                                                    'inline-block px-2 py-1 rounded text-xs font-medium',
-                                                    goal.status === 'confirm' ? 'bg-green-100 text-green-800' :
-                                                    goal.status === 'contradict' ? 'bg-red-100 text-red-800' :
-                                                    'bg-gray-100 text-gray-800'
-                                                ]"
-                                            >
-                                                {{ goal.status }}
-                                            </span>
+                                        <!-- Summary (if available) -->
+                                        <p v-if="goal.summary" class="text-xs text-gray-500 italic mb-1">{{ goal.summary }}</p>
+                                        <p class="text-sm text-gray-900 break-words">{{ goal.text }}</p>
+                                        <!-- Evaluation detail (collapsed) -->
+                                        <div v-if="goal.evaluation && selectedGoalId === goal.id" class="mt-2 p-2 bg-white rounded border border-gray-100 text-xs">
+                                            <div class="flex items-center space-x-2 mb-1">
+                                                <span class="font-medium">Evaluation:</span>
+                                                <span :class="evalStyleFor(goal.evaluation.category).bg + ' ' + evalStyleFor(goal.evaluation.category).text + ' px-1.5 py-0.5 rounded'">
+                                                    {{ goal.evaluation.category }}
+                                                </span>
+                                            </div>
+                                            <p v-if="goal.evaluation.explanation" class="text-gray-600">{{ goal.evaluation.explanation }}</p>
+                                            <p v-if="goal.evaluation.confidence" class="text-gray-400 mt-1">Confidence: {{ (goal.evaluation.confidence * 100).toFixed(0) }}%</p>
                                         </div>
                                     </div>
                                     
                                     <!-- Goal Controls -->
-                                    <div class="flex flex-col space-y-1 ml-2">
+                                    <div class="flex flex-col space-y-1 ml-2 flex-shrink-0">
                                         <button 
-                                            @click="toggleGoalLock(goal)"
+                                            @click.stop="toggleGoalLock(goal)"
                                             :class="[
                                                 'text-xs px-2 py-1 rounded',
-                                                goal.locked ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-600'
+                                                goal.locked ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                                             ]"
                                         >
-                                            {{ goal.locked ? 'Locked' : 'Lock' }}
+                                            {{ goal.locked ? '🔒' : 'Lock' }}
                                         </button>
                                         <button 
-                                            @click="toggleGoalComplete(goal)"
+                                            @click.stop="toggleGoalComplete(goal)"
                                             :class="[
                                                 'text-xs px-2 py-1 rounded',
-                                                goal.completed ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+                                                goal.completed ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                                             ]"
                                         >
-                                            {{ goal.completed ? 'Done' : 'Complete' }}
+                                            {{ goal.completed ? '✓ Done' : 'Complete' }}
                                         </button>
                                     </div>
                                 </div>
@@ -506,9 +527,51 @@
                     </div>
                     
                     <!-- Events Tab -->
-                    <div v-else class="text-gray-500 text-center py-8">
-                        Events tracking<br>
-                        <small>(Coming in Phase 3)</small>
+                    <div v-else class="space-y-4">
+                        <!-- Keyphrases -->
+                        <div>
+                            <h3 class="text-sm font-semibold text-gray-700 mb-2">🔑 Keyphrases</h3>
+                            <div v-if="Object.keys(keyphrases).length === 0" class="text-gray-400 text-sm">
+                                Keyphrases will appear here after conversation turns.
+                            </div>
+                            <div v-else class="flex flex-wrap gap-1.5">
+                                <span 
+                                    v-for="(phrase, idx) in allKeyphrases" 
+                                    :key="idx"
+                                    class="inline-block bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full px-2.5 py-0.5 text-xs font-medium"
+                                >
+                                    {{ phrase }}
+                                </span>
+                            </div>
+                        </div>
+                        
+                        <!-- Goal Events Log -->
+                        <div>
+                            <h3 class="text-sm font-semibold text-gray-700 mb-2">📋 Goal Events</h3>
+                            <div v-if="timelineData.length === 0" class="text-gray-400 text-sm">
+                                Events will appear as goals are inferred, merged, and evaluated.
+                            </div>
+                            <div v-else class="space-y-2">
+                                <div 
+                                    v-for="turn in [...timelineData].reverse()" 
+                                    :key="'event-' + turn.turnNumber"
+                                    class="bg-gray-50 border border-gray-200 rounded p-2 text-xs"
+                                >
+                                    <div class="font-medium text-gray-700 mb-1">Turn {{ turn.turnNumber }}</div>
+                                    <div v-if="turn.inferredGoals.length" class="text-blue-600 mb-0.5">
+                                        Inferred: {{ turn.inferredGoals.map(g => g.text.substring(0, 40)).join(', ') }}
+                                    </div>
+                                    <div v-if="turn.finalGoals.length" class="text-green-600 mb-0.5">
+                                        Merged: {{ turn.finalGoals.length }} goal(s)
+                                    </div>
+                                    <div v-if="turn.evaluations.length" class="text-gray-600">
+                                        <span v-for="ev in turn.evaluations" :key="ev.goalId" class="mr-1">
+                                            {{ ev.goalId }}:{{ ev.result }}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

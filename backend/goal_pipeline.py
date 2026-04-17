@@ -1,18 +1,27 @@
 """
-OnGoal Pipeline Functions - Goal inference, merging, and evaluation
+OnGoal Pipeline Functions - Goal inference, merging, evaluation, and keyphrase extraction
+
+Implements the 4 LLM-powered pipeline stages defined in:
+  - A.1: Goal Inference (infer_goals)
+  - A.2: Goal Merging (merge_goals)
+  - A.3: Goal Evaluation (evaluate_goal)
+  - A.4: Keyphrase Extraction (extract_keyphrases)
 """
+
 import json
+import logging
 import re
 from typing import List, Dict
 from datetime import datetime
 
 from dotenv import load_dotenv
 
-from backend.models import Goal
+from backend.models import Goal, GoalEvaluation
 from backend.llm_service import LLMService
 
-# Load environment variables from .env file
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 async def infer_goals(message: str, message_id: str, existing_goals_count: int = 0) -> List[Goal]:
@@ -34,40 +43,48 @@ Please respond ONLY with a valid JSON in the following format:
 
 Human dialogue: {message}"""
 
-    try:
-        # Use centralized LLM service
-        response_text = await LLMService.generate_response(inference_prompt, max_tokens=1000)
+    for attempt in range(2):
+        try:
+            response_text = await LLMService.generate_response(inference_prompt, max_tokens=1000)
+            
+            # Extract JSON from response
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if json_match:
+                response_data = json.loads(json_match.group())
+                clauses_data = response_data.get("clauses", [])
+            else:
+                clauses_data = []
+            
+            goals = []
+            total_prior = existing_goals_count
+            for clause_data in clauses_data:
+                goal = Goal(
+                    id=f"G{total_prior}",
+                    text=clause_data["clause"],
+                    type=clause_data["type"],
+                    summary=clause_data.get("summary", ""),
+                    source_message_id=message_id,
+                    created_at=datetime.now().isoformat()
+                )
+                total_prior += 1
+                goals.append(goal)
+            
+            return goals
         
-        # Extract JSON from response (updated for new format)
-        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-        if json_match:
-            response_data = json.loads(json_match.group())
-            clauses_data = response_data.get("clauses", [])
-        else:
-            clauses_data = []
-        
-        # Convert to Goal objects (updated for new JSON structure)
-        goals = []
-        for i, clause_data in enumerate(clauses_data):
-            goal = Goal(
-                id=f"G{existing_goals_count + i}",
-                text=clause_data["clause"],  # Using "clause" field now
-                type=clause_data["type"],
-                source_message_id=message_id,
-                created_at=datetime.now().isoformat()
-            )
-            goals.append(goal)
-        
-        return goals
-        
-    except Exception as e:
-        # Error in goal inference - log error but continue
-        print(f"Warning: Goal inference failed: {e}")
-        return []
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            logger.warning("Goal inference parse error (attempt %d): %s", attempt + 1, e)
+            if attempt == 0:
+                continue
+            return []
+        except Exception as e:
+            logger.warning("Goal inference failed: %s", e)
+            return []
+    
+    return []
 
 
 async def merge_goals(old_goals: List[Goal], new_goals: List[Goal]) -> List[Goal]:
-    """Merge old and new goals using exact prompt from OnGoal requirements (Appendix A.2)"""
+    """Merge old and new goals, respecting locked goals"""
     
     if not new_goals:
         return old_goals
@@ -75,9 +92,17 @@ async def merge_goals(old_goals: List[Goal], new_goals: List[Goal]) -> List[Goal
     if not old_goals:
         return new_goals
     
+    # Separate locked goals — they are excluded from merge
+    locked_goals = [g for g in old_goals if g.locked]
+    mergeable_old = [g for g in old_goals if not g.locked]
+    
+    # If no mergeable old goals, just combine locked + new
+    if not mergeable_old:
+        return locked_goals + new_goals
+    
     
     # Prepare goal lists as numbered strings
-    old_goals_str_list = "\n".join([f"{i+1}. {goal.text}" for i, goal in enumerate(old_goals)])
+    old_goals_str_list = "\n".join([f"{i+1}. {goal.text}" for i, goal in enumerate(mergeable_old)])
     new_goals_str_list = "\n".join([f"{i+1}. {goal.text}" for i, goal in enumerate(new_goals)])
     
     # ENHANCED PROMPT - Based on OnGoal Requirements Appendix A.2 with semantic contradiction awareness
@@ -119,78 +144,64 @@ Please respond ONLY with a valid JSON in the following format:
 }}"""
 
     try:
-        # Use centralized LLM service
         response_text = await LLMService.generate_response(merge_prompt, max_tokens=1500)
 
-        # Extract JSON from response
         json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-        if json_match:
-            response_data = json.loads(json_match.group())
-            operations = response_data.get("operations", [])
-        else:
-            operations = []
+        operations = json.loads(json_match.group()).get("operations", []) if json_match else []
         
-        # Process merge operations to create final goal list
+        # Build merged goals with unique IDs
         merged_goals = []
-        all_goals = old_goals + new_goals
+        all_mergeable = mergeable_old + new_goals
+        goal_counter = 0
         
         for operation in operations:
             updated_goal_text = operation["updated_goal"]
             operation_type = operation["operation"]
-            goal_numbers = operation["goal_numbers"]
+            goal_numbers = operation.get("goal_numbers", [])
             
-            # Find the appropriate source goal based on the operation
             source_goal = None
-            if goal_numbers and len(goal_numbers) > 0:
+            if goal_numbers:
                 try:
-                    # Parse goal number (format: "1", "2", etc.)
-                    primary_goal_idx = int(goal_numbers[0]) - 1  # Convert to 0-based index
-                    
+                    primary_idx = int(goal_numbers[0]) - 1
                     if operation_type in ["combine", "replace"] and len(goal_numbers) > 1:
-                        # For combine/replace, prefer the newer goal's type (second goal number)
-                        secondary_goal_idx = int(goal_numbers[1]) - 1
-                        if secondary_goal_idx < len(new_goals):
-                            source_goal = new_goals[secondary_goal_idx]
-                        elif primary_goal_idx < len(old_goals):
-                            source_goal = old_goals[primary_goal_idx]
+                        secondary_idx = int(goal_numbers[1]) - 1
+                        source_goal = new_goals[secondary_idx] if secondary_idx < len(new_goals) else (
+                            mergeable_old[primary_idx] if primary_idx < len(mergeable_old) else None
+                        )
                     else:
-                        # For keep operations, use the original goal
-                        if primary_goal_idx < len(all_goals):
-                            source_goal = all_goals[primary_goal_idx]
-                        
+                        source_goal = all_mergeable[primary_idx] if primary_idx < len(all_mergeable) else None
                 except (ValueError, IndexError):
-                    # Fallback if parsing fails
-                    source_goal = old_goals[0] if old_goals else new_goals[0]
-            else:
-                # Fallback for malformed operations
-                source_goal = old_goals[0] if old_goals else new_goals[0]
+                    pass
             
-            # If we still don't have a source goal, use the first available
             if not source_goal:
-                source_goal = old_goals[0] if old_goals else new_goals[0]
+                source_goal = mergeable_old[0] if mergeable_old else new_goals[0]
             
             merged_goal = Goal(
-                id=f"G{len(merged_goals)}_{operation_type}",
+                id=f"G{goal_counter}",
                 text=updated_goal_text,
-                type=source_goal.type,  # Now uses the correct source goal's type
+                type=source_goal.type,
                 source_message_id=source_goal.source_message_id,
+                locked=False,
+                completed=source_goal.completed,
                 created_at=datetime.now().isoformat()
             )
+            goal_counter += 1
             merged_goals.append(merged_goal)
         
-        return merged_goals if merged_goals else old_goals + new_goals
+        # Re-add locked goals to the result
+        result = locked_goals + (merged_goals if merged_goals else mergeable_old + new_goals)
+        return result
         
     except Exception as e:
-        # Error in goal merging - log error and fallback
-        print(f"Warning: Goal merge failed: {e}")
-        # Fallback: return all goals without merging
-        return old_goals + new_goals
+        logger.warning("Goal merge failed: %s", e)
+        return locked_goals + mergeable_old + new_goals
 
 
 async def evaluate_goal(goal: Goal, assistant_response: str) -> Dict:
-    """Evaluate how assistant response addresses a goal using exact prompt from OnGoal requirements (Appendix A.3)"""
-    
-    # EXACT PROMPT from OnGoal Requirements Appendix A.3
+    """Evaluate how assistant response addresses a goal using prompt from OnGoal requirements (Appendix A.3)"""
+
+    from backend.models import GoalEvaluation
+
     evaluation_prompt = f"""You will be presented with human dialogue and a response from you, an assistant. Your task is to evaluate the assistant response in terms of the following conversational goal: {goal.text}
 
 Categorize how the assistant response addresses the goal in one of three categories. The categories are confirm, contradict, or ignore. Explain the relationship between the response and the goal in ONE sentence. Extract clauses verbatim from the response exactly as they appear as examples that show evidence to support your explanation.
@@ -198,47 +209,43 @@ Categorize how the assistant response addresses the goal in one of three categor
 Please respond ONLY with a valid JSON in the following format:
 
 {{
-  "category": "<CATEGORY_1>",
-  "explanation": "<EXPLANATION_1>",
+  "category": "<CATEGORY>",
+  "explanation": "<EXPLANATION>",
   "examples": ["<EXAMPLE_1>", "<EXAMPLE_2>"]
 }}
 
 Assistant response: {assistant_response}"""
 
     try:
-        # Use centralized LLM service
         response_text = await LLMService.generate_response(evaluation_prompt, max_tokens=1000)
-        
-        # Extract JSON from response
+
         json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
         if json_match:
             evaluation_data = json.loads(json_match.group())
-            return {
-                "goal_id": goal.id,
-                "category": evaluation_data.get("category", "ignore"),
-                "explanation": evaluation_data.get("explanation", ""),
-                "examples": evaluation_data.get("examples", []),
-                "timestamp": datetime.now().isoformat()
-            }
-        else:
-            return {
-                "goal_id": goal.id,
-                "category": "ignore",
-                "explanation": "Unable to evaluate goal",
-                "examples": [],
-                "timestamp": datetime.now().isoformat()
-            }
-        
+            evaluation = GoalEvaluation(
+                goal_id=goal.id,
+                category=evaluation_data.get("category", "ignore"),
+                explanation=evaluation_data.get("explanation", ""),
+                examples=evaluation_data.get("examples", []),
+            )
+            goal.evaluation = evaluation
+            goal.status = evaluation.category
+            return evaluation.model_dump()
+
+        # Fallback when JSON parse fails
+        fallback = GoalEvaluation(goal_id=goal.id, category="ignore",
+                                  explanation="Unable to evaluate goal")
+        goal.evaluation = fallback
+        goal.status = "ignore"
+        return fallback.model_dump()
+
     except Exception as e:
-        # Error in goal evaluation - log and return safe fallback
-        print(f"Warning: Goal evaluation failed for {goal.id}: {e}")
-        return {
-            "goal_id": goal.id,
-            "category": "ignore",
-            "explanation": f"Unable to evaluate goal due to service error",
-            "examples": [],
-            "timestamp": datetime.now().isoformat()
-        }
+        logger.warning("Goal evaluation failed for %s: %s", goal.id, e)
+        error_eval = GoalEvaluation(goal_id=goal.id, category="ignore",
+                                     explanation="Unable to evaluate goal due to service error")
+        goal.evaluation = error_eval
+        goal.status = "ignore"
+        return error_eval.model_dump()
 
 
 async def stream_llm_response(message: str, connection_manager, websocket, message_id: str, conversation_messages: List):
@@ -291,17 +298,50 @@ async def stream_llm_response(message: str, connection_manager, websocket, messa
             "message_id": message_id,
             "full_text": full_response
         }, websocket)
-        
+
         return full_response
-        
+
     except Exception as e:
         # Error in LLM streaming - log and send user-friendly error
-        print(f"Error in LLM streaming: {e}")
+        logger.error("LLM streaming error: %s", e)
         error_msg = "Unable to generate response. Please check your API key configuration."
         await connection_manager.send_message({
             "type": "error",
             "message": error_msg
         }, websocket)
         return error_msg
+
+
+async def extract_keyphrases(assistant_response: str) -> List[str]:
+    """Extract salient keyphrases from an assistant response (REQ-09-04-001–005).
+
+    Uses the keyphrase extraction prompt from OnGoal Requirements Appendix A.4.
+    Returns a list of verbatim phrases capturing the most salient topics.
+    """
+
+    keyphrase_prompt = f"""You will be presented with an assistant response. Extract the most salient keyphrases from the response exactly as they appear verbatim. Focus on phrases that capture key topics and themes.
+
+Respond ONLY with a valid JSON in the following format:
+
+{{
+  "keyphrases": ["<KEYPHRASE_1>", "<KEYPHRASE_2>"]
+}}
+
+Assistant response: {assistant_response}"""
+
+    try:
+        response_text = await LLMService.generate_response(keyphrase_prompt, max_tokens=500)
+
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            data = json.loads(json_match.group())
+            return data.get("keyphrases", [])
+
+        logger.warning("Keyphrase extraction: no JSON found in response")
+        return []
+
+    except Exception as e:
+        logger.warning("Keyphrase extraction failed: %s", e)
+        return []
 
 

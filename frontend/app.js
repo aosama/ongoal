@@ -1,12 +1,38 @@
 /**
- * OnGoal Frontend - Vue.js application with WebSocket integration
+ * OnGoal Frontend - Vue.js 3 application with WebSocket + REST integration
+ *
+ * Features:
+ * - Real-time chat with LLM streaming responses
+ * - Goal sidebar with Goals/Timeline/Events tabs
+ * - Goal cards with type badges, lock/complete controls, evaluation status
+ * - Goal glyph click to expand evaluation details
+ * - Pipeline controls (toggle infer/merge/evaluate stages)
+ * - LLM status badge with provider, model, and cost info
  */
+const { createApp, ref, reactive, computed, onMounted, nextTick, watch } = Vue;
 
-const { createApp, ref, reactive, onMounted, nextTick, watch } = Vue;
+// Configuration
+const API_BASE = window.__API_BASE__ || `http://${window.location.hostname}:8000`;
+const WS_URL = window.__WS_URL__ || `ws://${window.location.hostname}:8000/ws`;
+const CONVERSATION_ID = 'default';
+
+/* Goal type config — colors and icons */
+const GOAL_TYPES = {
+    question:  { color: 'blue',  bg: 'bg-blue-100', text: 'text-blue-800', ring: 'ring-blue-400', icon: '?' },
+    request:   { color: 'green', bg: 'bg-emerald-100', text: 'text-emerald-800', ring: 'ring-emerald-400', icon: '!' },
+    offer:     { color: 'amber', bg: 'bg-amber-100', text: 'text-amber-800', ring: 'ring-amber-400', icon: '🎁' },
+    suggestion:{ color: 'red',  bg: 'bg-red-100', text: 'text-red-800', ring: 'ring-red-400', icon: '💡' },
+};
+
+const EVAL_STYLES = {
+    confirm:    { bg: 'bg-green-100', text: 'text-green-800', border: 'border-green-300', icon: '✓' },
+    contradict: { bg: 'bg-red-100', text: 'text-red-800', border: 'border-red-300', icon: '✗' },
+    ignore:     { bg: 'bg-yellow-100', text: 'text-yellow-800', border: 'border-yellow-300', icon: '⊘' },
+};
 
 createApp({
     setup() {
-        // Reactive state
+        // --- State ---
         const messages = ref([]);
         const goals = ref([]);
         const currentMessage = ref('');
@@ -14,149 +40,151 @@ createApp({
         const activeTab = ref('Goals');
         const ws = ref(null);
         const messagesContainer = ref(null);
-        const timelineData = ref([]);  // Timeline visualization data
-        
-        // Pipeline settings
+        const timelineData = ref([]);
+        const llmStatus = ref(null);
+        const selectedGoalId = ref(null);
+        const keyphrases = ref({});
+
         const pipelineSettings = reactive({
             infer: true,
             merge: true,
             evaluate: true
         });
-        
-        // Current streaming message
+
         const streamingMessage = ref({
-            id: '',
-            content: '',
-            role: 'assistant',
-            timestamp: new Date().toISOString()
+            id: '', content: '', role: 'assistant', timestamp: ''
         });
 
-        // WebSocket connection
+        // --- Computed ---
+        const selectedGoal = computed(() => {
+            if (!selectedGoalId.value) return null;
+            return goals.value.find(g => g.id === selectedGoalId.value) || null;
+        });
+
+        const allKeyphrases = computed(() => {
+            const all = [];
+            Object.values(keyphrases.value).forEach(phrases => {
+                all.push(...phrases);
+            });
+            return [...new Set(all)]; // deduplicate
+        });
+
+        const goalTypeConfig = (type) => GOAL_TYPES[type] || GOAL_TYPES.suggestion;
+        const evalStyleFor = (status) => EVAL_STYLES[status] || EVAL_STYLES.ignore;
+
+        // --- API Helpers ---
+        const apiCall = async (path, options = {}) => {
+            try {
+                const res = await fetch(`${API_BASE}${path}`, {
+                    headers: { 'Content-Type': 'application/json' },
+                    ...options
+                });
+                if (!res.ok) throw new Error(`API ${res.status}: ${path}`);
+                return await res.json();
+            } catch (err) {
+                console.error('API call failed:', path, err);
+                return null;
+            }
+        };
+
+        // --- LLM Status ---
+        const fetchLlmStatus = async () => {
+            const data = await apiCall('/api/llm-status');
+            if (data) llmStatus.value = data;
+        };
+
+        // --- Goal Selection ---
+        const selectGoal = (goalId) => {
+            selectedGoalId.value = selectedGoalId.value === goalId ? null : goalId;
+        };
+
+        // --- Keyphrases ---
+        const fetchKeyphrases = async () => {
+            const data = await apiCall(`/api/conversations/${CONVERSATION_ID}/keyphrases`);
+            if (data && data.keyphrases) {
+                keyphrases.value[data.message_id || 'latest'] = data.keyphrases;
+            }
+        };
+
+        // --- WebSocket ---
         const connectWebSocket = () => {
             try {
-                console.log('🔗 DEBUG: Attempting WebSocket connection to ws://localhost:8000/ws');
-                ws.value = new WebSocket('ws://localhost:8000/ws');
-                
+                ws.value = new WebSocket(WS_URL);
+
                 ws.value.onopen = () => {
-                    console.log('✅ DEBUG: WebSocket connected successfully');
-                    // Request current conversation state
-                    sendWebSocketMessage({
-                        type: 'get_conversation'
-                    });
+                    sendWs({ type: 'get_conversation' });
                 };
-                
+
                 ws.value.onmessage = (event) => {
-                    const data = JSON.parse(event.data);
-                    handleWebSocketMessage(data);
+                    handleWsMessage(JSON.parse(event.data));
                 };
-                
+
                 ws.value.onclose = () => {
-                    console.log('WebSocket disconnected');
-                    // Attempt to reconnect after 3 seconds
                     setTimeout(connectWebSocket, 3000);
                 };
-                
-            ws.value.onerror = (error) => {
-                console.error('❌ DEBUG: WebSocket error:', error);
-            };
-                
-            } catch (error) {
-                console.error('Failed to connect WebSocket:', error);
-                // Retry connection after 3 seconds
+
+                ws.value.onerror = () => {
+                    // onclose will handle reconnection
+                };
+            } catch (err) {
+                console.error('WebSocket connect failed:', err);
                 setTimeout(connectWebSocket, 3000);
             }
         };
 
-        // Send message via WebSocket
-        const sendWebSocketMessage = (data) => {
-            console.log('📤 DEBUG: Attempting to send WebSocket message:', data);
-            if (ws.value && ws.value.readyState === WebSocket.OPEN) {
+        const sendWs = (data) => {
+            if (ws.value?.readyState === WebSocket.OPEN) {
                 ws.value.send(JSON.stringify(data));
-                console.log('✅ DEBUG: WebSocket message sent');
-            } else {
-                console.error('❌ DEBUG: WebSocket not connected. ReadyState:', ws.value?.readyState);
             }
         };
 
-        // Handle incoming WebSocket messages
-        const handleWebSocketMessage = (data) => {
-            console.log('🚨 WEBSOCKET MESSAGE:', data.type);
+        // --- WebSocket Message Handler ---
+        const handleWsMessage = (data) => {
             switch (data.type) {
                 case 'conversation_state':
-                    // Load existing conversation
                     messages.value = data.conversation.messages;
                     goals.value = data.conversation.goals;
-                    Object.assign(pipelineSettings, data.conversation.pipeline_settings);
-                    break;
-                    
-                case 'goals_inferred':
-                    console.log('🚨 GOALS_INFERRED handler triggered with:', data.goals);
-                    // Add inferred goals to the last user message
-                    const lastMessage = messages.value[messages.value.length - 1];
-                    if (lastMessage && lastMessage.role === 'user') {
-                        lastMessage.goals = data.goals;
+                    if (data.conversation.pipeline_settings) {
+                        const ps = data.conversation.pipeline_settings;
+                        pipelineSettings.infer = ps.infer ?? ps.infer ?? true;
+                        pipelineSettings.merge = ps.merge ?? true;
+                        pipelineSettings.evaluate = ps.evaluate ?? true;
                     }
-                    
-                    // Add goals to global goals list
+                    break;
+
+                case 'goals_inferred': {
+                    const last = messages.value[messages.value.length - 1];
+                    if (last?.role === 'user') last.goals = data.goals;
                     goals.value.push(...data.goals);
-                    
-                    // Update timeline data with inferred goals
-                    console.log('🚨 About to call updateTimelineWithInference...');
-                    updateTimelineWithInference(data.goals);
-                    console.log('🚨 Called updateTimelineWithInference');
+                    updateTimelineInference(data.goals);
                     break;
-                    
+                }
+
                 case 'goals_updated':
-                    console.log('🔄 DEBUG: Goals updated via merge:', data.goals);
-                    // Replace all goals with updated list (handles merge operations)
                     goals.value = [...data.goals];
-                    
-                    // For multi-turn conversations, we need to update goals on ALL user messages
-                    // since merged goals might span multiple messages
-                    messages.value.forEach(message => {
-                        if (message.role === 'user') {
-                            // Find goals that originated from this message
-                            const messageGoals = data.goals.filter(goal => 
-                                goal.source_message_id === message.id);
-                            if (messageGoals.length > 0) {
-                                message.goals = messageGoals;
-                            }
+                    // Update per-message goal mappings
+                    messages.value.forEach(msg => {
+                        if (msg.role === 'user') {
+                            const msgGoals = data.goals.filter(g => g.source_message_id === msg.id);
+                            if (msgGoals.length > 0) msg.goals = msgGoals;
                         }
                     });
-                    
-                    // Update timeline data with merge information
-                    updateTimelineWithMerge(data);
-                    
-                    // If no goals were found for the latest message due to merging,
-                    // show a subset of all goals as glyphs to indicate activity
-                    const lastUserMessage = messages.value.slice().reverse().find(m => m.role === 'user');
-                    if (lastUserMessage && (!lastUserMessage.goals || lastUserMessage.goals.length === 0)) {
-                        // Show some goals as glyphs to indicate the message contributed to goals
-                        // Take the most recent goals (assumes newest goals are at the end)
-                        const recentGoals = data.goals.slice(-2); // Show last 2 goals as glyphs
-                        lastUserMessage.goals = recentGoals;
-                    }
+                    updateTimelineMerge(data);
                     break;
-                    
+
                 case 'goals_evaluated':
-                    console.log('⚖️ DEBUG: Received goal evaluations:', data.evaluations);
-                    data.evaluations.forEach(evaluation => {
-                        const goal = goals.value.find(g => g.id === evaluation.goal_id);
+                    data.evaluations.forEach(ev => {
+                        const goal = goals.value.find(g => g.id === ev.goal_id);
                         if (goal) {
-                            goal.status = evaluation.category;
-                            goal.evaluation = evaluation;
+                            goal.status = ev.category;
+                            goal.evaluation = ev;
                         }
                     });
-                    
-                    // Update timeline data with evaluation results
-                    updateTimelineWithEvaluation(data.evaluations);
+                    updateTimelineEvaluation(data.evaluations);
                     break;
-                    
+
                 case 'llm_response_chunk':
-                    // Handle streaming response
-                    // Note: isStreaming is already true from sendMessage(), so just handle the content
                     if (streamingMessage.value.id !== data.message_id) {
-                        // Start new streaming message
                         streamingMessage.value = {
                             id: data.message_id,
                             content: data.text,
@@ -164,207 +192,128 @@ createApp({
                             timestamp: new Date().toISOString()
                         };
                     } else {
-                        // Append to existing streaming message
                         streamingMessage.value.content += data.text;
                     }
-                    
-                    // Update the last assistant message or add new one
                     const lastMsg = messages.value[messages.value.length - 1];
-                    if (lastMsg && lastMsg.role === 'assistant' && lastMsg.id === data.message_id) {
+                    if (lastMsg?.role === 'assistant' && lastMsg.id === data.message_id) {
                         lastMsg.content = streamingMessage.value.content;
                     } else {
-                        messages.value.push({...streamingMessage.value});
+                        messages.value.push({ ...streamingMessage.value });
                     }
-                    
-                    // Auto-scroll to bottom
-                    nextTick(() => {
-                        scrollToBottom();
-                    });
+                    nextTick(scrollToBottom);
                     break;
-                    
+
                 case 'llm_response_complete':
-                    // Finish streaming
                     isStreaming.value = false;
-                    
-                    // Update final message
-                    const finalMsg = messages.value.find(m => m.id === data.message_id);
-                    if (finalMsg) {
-                        finalMsg.content = data.full_text;
+                    const final = messages.value.find(m => m.id === data.message_id);
+                    if (final) final.content = data.full_text;
+                    break;
+
+                case 'keyphrases_extracted':
+                    if (data.keyphrases && data.keyphrases.length > 0) {
+                        keyphrases.value[data.message_id || 'latest'] = data.keyphrases;
                     }
                     break;
-                    
+
                 case 'pipeline_toggled':
-                    // Update pipeline settings
                     pipelineSettings[data.stage] = data.enabled;
                     break;
-                    
+
                 case 'error':
                     console.error('Server error:', data.message);
                     isStreaming.value = false;
                     break;
-                    
-                default:
-                    console.log('Unknown message type:', data.type);
             }
         };
 
-        // Send user message
+        // --- User Actions ---
         const sendMessage = () => {
             if (!currentMessage.value.trim() || isStreaming.value) return;
-            
-            const messageText = currentMessage.value.trim();
-            const messageId = `msg_${messages.value.length}`;
-            
-            // Add user message to chat
-            const userMessage = {
-                id: messageId,
-                content: messageText,
+
+            const text = currentMessage.value.trim();
+            messages.value.push({
+                id: `msg_${messages.value.length}`,
+                content: text,
                 role: 'user',
                 timestamp: new Date().toISOString(),
                 goals: []
-            };
-            
-            messages.value.push(userMessage);
-            
-            // Set streaming immediately to show "Thinking..." indicator
-            // This provides instant feedback while backend processes goals and starts LLM response
+            });
+
             isStreaming.value = true;
-            
-            // Send to backend
-            sendWebSocketMessage({
-                type: 'user_message',
-                message: messageText
-            });
-            
-            // Clear input
+            sendWs({ type: 'user_message', message: text });
             currentMessage.value = '';
-            
-            // Scroll to bottom
-            nextTick(() => {
-                scrollToBottom();
-            });
+            nextTick(scrollToBottom);
         };
 
-        // Toggle pipeline stage
         const togglePipeline = (stage) => {
-            const newState = !pipelineSettings[stage];
-            pipelineSettings[stage] = newState;
-            
-            sendWebSocketMessage({
-                type: 'toggle_pipeline',
-                stage: stage,
-                enabled: newState
-            });
+            const enabled = !pipelineSettings[stage];
+            pipelineSettings[stage] = enabled;
+            sendWs({ type: 'toggle_pipeline', stage, enabled });
         };
 
-        // Goal controls
-        const toggleGoalLock = (goal) => {
-            goal.locked = !goal.locked;
-            // Goal lock state persistence (Phase 2 feature)
-        };
-
-        const toggleGoalComplete = (goal) => {
-            goal.completed = !goal.completed;
-            // Goal completion state persistence (Phase 2 feature)
-        };
-
-        // Utility functions
-        const scrollToBottom = () => {
-            if (messagesContainer.value) {
-                messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
+        // --- Goal Controls (wired to backend API) ---
+        const toggleGoalLock = async (goal) => {
+            const endpoint = goal.locked ? 'unlock' : 'lock';
+            const res = await apiCall(
+                `/api/conversations/${CONVERSATION_ID}/goals/${goal.id}/${endpoint}`,
+                { method: 'POST' }
+            );
+            if (res?.goal) {
+                goal.locked = res.goal.locked;
+                const found = goals.value.find(g => g.id === goal.id);
+                if (found) found.locked = res.goal.locked;
             }
         };
 
-        const formatTime = (timestamp) => {
-            const date = new Date(timestamp);
-            return date.toLocaleTimeString([], { 
-                hour: '2-digit', 
-                minute: '2-digit' 
-            });
+        const toggleGoalComplete = async (goal) => {
+            const res = await apiCall(
+                `/api/conversations/${CONVERSATION_ID}/goals/${goal.id}`,
+                {
+                    method: 'PUT',
+                    body: JSON.stringify({ completed: !goal.completed })
+                }
+            );
+            if (res?.goal) {
+                goal.completed = res.goal.completed;
+                const found = goals.value.find(g => g.id === goal.id);
+                if (found) found.completed = res.goal.completed;
+            }
         };
 
-        const formatMessage = (content) => {
-            // Basic markdown-like formatting
-            return content
-                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                .replace(/\*(.*?)\*/g, '<em>$1</em>')
-                .replace(/`(.*?)`/g, '<code class="bg-gray-100 px-1 rounded">$1</code>')
-                .replace(/\n/g, '<br>');
-        };
-
-        // Lifecycle
-        onMounted(() => {
-            connectWebSocket();
-            
-            // Expose data to window for debugging
-            window.ws = ws;
-            window.goals = goals;
-            window.messages = messages;
-            window.pipelineSettings = pipelineSettings;
-        });
-
-        // Watch for goal changes to update UI
-        watch(goals, (newGoals) => {
-            console.log('Goals updated:', newGoals.length);
-        }, { deep: true });
-
-        // Timeline functions
-        const updateTimelineWithInference = (inferredGoals) => {
-            console.log('🚨🚨🚨 TIMELINE INFERENCE CALLED 🚨🚨🚨', inferredGoals);
-            const turnNumber = Math.ceil(messages.value.filter(m => m.role === 'user').length);
-            console.log('🚨 TIMELINE: Current turn number:', turnNumber);
-            
-            // Find or create timeline entry for this turn
-            let turn = timelineData.value.find(t => t.turnNumber === turnNumber);
+        // --- Timeline ---
+        const updateTimelineInference = (inferredGoals) => {
+            const turnNum = Math.ceil(messages.value.filter(m => m.role === 'user').length);
+            let turn = timelineData.value.find(t => t.turnNumber === turnNum);
             if (!turn) {
-                turn = {
-                    turnNumber,
-                    inferredGoals: [],
-                    finalGoals: [],
-                    evaluations: []
-                };
+                turn = { turnNumber: turnNum, inferredGoals: [], finalGoals: [], evaluations: [] };
                 timelineData.value.push(turn);
-                console.log('➕ Created new timeline turn:', turn);
             }
-            
             turn.inferredGoals = inferredGoals || [];
-            console.log('🚨 TIMELINE: Updated with inference:', turn);
-            console.log('🚨 TIMELINE: Total timeline data length:', timelineData.value.length);
-            console.log('🚨 TIMELINE: timelineData.value =', timelineData.value);
         };
-        
-        const updateTimelineWithMerge = (mergeData) => {
-            console.log('🔍 updateTimelineWithMerge called with:', mergeData);
-            const turnNumber = Math.ceil(messages.value.filter(m => m.role === 'user').length);
-            
-            let turn = timelineData.value.find(t => t.turnNumber === turnNumber);
+
+        const updateTimelineMerge = (mergeData) => {
+            const turnNum = Math.ceil(messages.value.filter(m => m.role === 'user').length);
+            const turn = timelineData.value.find(t => t.turnNumber === turnNum);
             if (turn) {
-                // Add operation information to goals
                 turn.finalGoals = (mergeData.goals || []).map(goal => ({
                     ...goal,
                     operation: goal.id.includes('_') ? goal.id.split('_')[1] : 'keep'
                 }));
-                console.log('📊 Timeline updated with merge:', turn);
-                console.log('📊 Total timeline data length:', timelineData.value.length);
-            } else {
-                console.log('❌ No timeline turn found for merge, turn number:', turnNumber);
             }
         };
-        
-        const updateTimelineWithEvaluation = (evaluations) => {
-            const turnNumber = Math.ceil(messages.value.filter(m => m.role === 'assistant').length);
-            
-            let turn = timelineData.value.find(t => t.turnNumber === turnNumber);
+
+        const updateTimelineEvaluation = (evaluations) => {
+            const turnNum = Math.ceil(messages.value.filter(m => m.role === 'assistant').length);
+            const turn = timelineData.value.find(t => t.turnNumber === turnNum);
             if (turn) {
-                turn.evaluations = (evaluations || []).map(eval => ({
-                    goalId: eval.goal_id,
-                    result: eval.category,
-                    explanation: eval.explanation
+                turn.evaluations = (evaluations || []).map(ev => ({
+                    goalId: ev.goal_id,
+                    result: ev.category,
+                    explanation: ev.explanation
                 }));
-                console.log('📊 Timeline updated with evaluation:', turn);
             }
         };
-        
+
         const getGoalNodeClass = (goal) => {
             return [
                 'timeline-node',
@@ -372,15 +321,11 @@ createApp({
                 goal.operation ? `operation-${goal.operation}` : ''
             ].filter(Boolean).join(' ');
         };
-        
-        const getConnectionClass = (operation) => {
-            return `timeline-connection-${operation}`;
-        };
-        
-        const getEvaluationClass = (result) => {
-            return `timeline-evaluation-${result} px-2 py-1 rounded text-xs`;
-        };
-        
+
+        const getConnectionClass = (operation) => `timeline-connection-${operation}`;
+
+        const getEvaluationClass = (result) => `timeline-evaluation-${result} px-2 py-1 rounded text-xs`;
+
         const getEvaluationIcon = (result) => {
             switch (result) {
                 case 'confirm': return '✓';
@@ -389,71 +334,67 @@ createApp({
                 default: return '?';
             }
         };
-        
-        const truncateText = (text, maxLength) => {
-            if (!text) return '';
-            return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+
+        // --- Utilities ---
+        const scrollToBottom = () => {
+            if (messagesContainer.value) {
+                messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
+            }
         };
-        
+
+        const formatTime = (timestamp) => {
+            return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        };
+
+        const formatMessage = (content) => {
+            return content
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/`(.*?)`/g, '<code class="bg-gray-100 px-1 rounded">$1</code>')
+                .replace(/\n/g, '<br>');
+        };
+
+        const truncateText = (text, max) => {
+            if (!text) return '';
+            return text.length > max ? text.substring(0, max) + '...' : text;
+        };
+
         const navigateToMessage = (turnNumber) => {
-            // Scroll to the corresponding message in chat
-            const userMessages = messages.value.filter(m => m.role === 'user');
-            if (userMessages[turnNumber - 1]) {
-                // Find the message element and scroll to it
+            const userMsgs = messages.value.filter(m => m.role === 'user');
+            if (userMsgs[turnNumber - 1]) {
                 nextTick(() => {
-                    const messageElements = document.querySelectorAll('.chat-message');
-                    const targetIndex = (turnNumber - 1) * 2; // User + Assistant message pairs
-                    if (messageElements[targetIndex]) {
-                        messageElements[targetIndex].scrollIntoView({ 
-                            behavior: 'smooth', 
-                            block: 'center' 
-                        });
-                        // Highlight the message briefly
-                        messageElements[targetIndex].classList.add('highlighted');
-                        setTimeout(() => {
-                            messageElements[targetIndex].classList.remove('highlighted');
-                        }, 2000);
+                    const els = document.querySelectorAll('.chat-message');
+                    const idx = (turnNumber - 1) * 2;
+                    if (els[idx]) {
+                        els[idx].scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        els[idx].classList.add('highlighted');
+                        setTimeout(() => els[idx].classList.remove('highlighted'), 2000);
                     }
                 });
             }
         };
-        
-        const scrollTimeline = (direction) => {
-            const timelineContainer = document.querySelector('.timeline-visualization');
-            if (timelineContainer) {
-                const scrollAmount = direction === 'top' ? 0 : timelineContainer.scrollHeight;
-                timelineContainer.scrollTo({ top: scrollAmount, behavior: 'smooth' });
-            }
+
+        const scrollTimeline = (dir) => {
+            const el = document.querySelector('.timeline-visualization');
+            if (el) el.scrollTo({ top: dir === 'top' ? 0 : el.scrollHeight, behavior: 'smooth' });
         };
 
+        // --- Lifecycle ---
+        onMounted(() => {
+            connectWebSocket();
+            fetchLlmStatus();
+        });
+
         return {
-            // State
-            messages,
-            goals,
-            currentMessage,
-            isStreaming,
-            activeTab,
-            pipelineSettings,
-            messagesContainer,
-            timelineData,
-            
-            // Methods
-            sendMessage,
-            togglePipeline,
-            toggleGoalLock,
-            toggleGoalComplete,
-            formatTime,
-            formatMessage,
-            updateTimelineWithInference,
-            updateTimelineWithMerge,
-            updateTimelineWithEvaluation,
-            getGoalNodeClass,
-            getConnectionClass,
-            getEvaluationClass,
-            getEvaluationIcon,
-            truncateText,
-            navigateToMessage,
-            scrollTimeline
+            messages, goals, currentMessage, isStreaming, activeTab,
+            pipelineSettings, messagesContainer, timelineData, llmStatus,
+            selectedGoalId, selectedGoal, keyphrases, allKeyphrases,
+            goalTypeConfig, evalStyleFor,
+            sendMessage, togglePipeline, toggleGoalLock, toggleGoalComplete,
+            selectGoal, fetchKeyphrases,
+            formatTime, formatMessage, truncateText,
+            getGoalNodeClass, getConnectionClass, getEvaluationClass, getEvaluationIcon,
+            navigateToMessage, scrollTimeline,
         };
     }
 }).mount('#app');

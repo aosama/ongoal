@@ -84,9 +84,17 @@ pip install -r requirements.txt
 # Copy example environment file
 cp .env.example .env
 
-# Edit .env file with your API key
-# ANTHROPIC_API_KEY=your_api_key_here
-# ANTHROPIC_MODEL=claude-3-haiku-20240307
+# Edit .env file with your preferred LLM provider
+# For free local usage (default):
+#   LLM_PROVIDER=ollama
+#   OLLAMA_MODEL=gemma4:latest
+# Or use OpenRouter free tier:
+#   LLM_PROVIDER=openrouter
+#   OPENROUTER_API_KEY=your_key
+#   OPENROUTER_MODEL=google/gemma-2-9b-it:free
+# Or use Anthropic Claude (paid):
+#   LLM_PROVIDER=anthropic
+#   ANTHROPIC_API_KEY=your_api_key_here
 ```
 
 ### 5. Launch OnGoal
@@ -131,35 +139,48 @@ cp .env.example .env
 
 5. **Verify Installation**
    ```bash
-   python -c "import fastapi, anthropic, playwright; print('✅ All dependencies installed successfully')"
+   python -c "import fastapi; print('✅ All dependencies installed successfully')"
    ```
 
-## 🔑 API Key Setup
+## 🔑 LLM Provider Setup
 
-### Why Do You Need an Anthropic API Key?
+OnGoal supports **multiple LLM providers** — including free options!
 
-OnGoal uses **Anthropic's Claude LLM** for core functionality:
+### Option 1: Ollama (Free, Local) — Default
 
-1. **Goal Inference**: Analyzing user messages to extract implicit goals
-2. **Goal Merging**: Combining similar goals intelligently
-3. **Goal Evaluation**: Assessing whether goals are met in assistant responses
-4. **Test Validation**: LLM-powered test assertions for quality assurance
+1. **Install Ollama** from [ollama.com](https://ollama.com)
+2. **Pull a model**:
+   ```bash
+   ollama pull gemma4:latest    # or llama3.1, qwen2.5, etc.
+   ```
+3. **Configure `.env`**:
+   ```bash
+   LLM_PROVIDER=ollama
+   OLLAMA_MODEL=gemma4:latest
+   ```
+4. No API key needed — everything runs locally!
 
-### Getting Your API Key
+### Option 2: OpenRouter (Free Tier)
+
+1. **Sign up** at [openrouter.ai](https://openrouter.ai)
+2. **Create an API key** (free tier available)
+3. **Configure `.env`**:
+   ```bash
+   LLM_PROVIDER=openrouter
+   OPENROUTER_API_KEY=your_key_here
+   OPENROUTER_MODEL=google/gemma-2-9b-it:free
+   ```
+
+### Option 3: Anthropic Claude (Paid)
 
 1. **Sign up** at [Anthropic Console](https://console.anthropic.com/)
-2. **Create an API Key** in your dashboard
-3. **Add billing information** (Claude API requires payment)
-4. **Copy your API key** (starts with `sk-ant-api03-...`)
-
-### Setting Up Your API Key
-
-Edit your `.env` file and add your Anthropic API key:
-
-```bash
-ANTHROPIC_API_KEY=your_api_key_here
-ANTHROPIC_MODEL=claude-3-haiku-20240307
-```
+2. **Create an API Key** and add billing
+3. **Configure `.env`**:
+   ```bash
+   LLM_PROVIDER=anthropic
+   ANTHROPIC_API_KEY=your_api_key_here
+   ANTHROPIC_MODEL=claude-3-haiku-20240307
+   ```
 
 ### API Key Security
 
@@ -283,10 +304,10 @@ OnGoal follows a **modular, test-driven architecture**:
 
 ### Technology Stack
 
-- **Backend**: FastAPI + WebSockets + Anthropic Claude
-- **Frontend**: Vanilla JavaScript + HTML5 + CSS3
+- **Backend**: FastAPI + WebSockets + Multi-Provider LLM (Ollama/OpenRouter/Anthropic)
+- **Frontend**: Vanilla JavaScript + HTML5 + CSS3 + Vue.js 3
 - **Testing**: Pytest + Playwright + Custom LLM Assertions
-- **AI**: Anthropic Claude (Haiku model)
+- **AI**: Configurable — defaults to Ollama (free, local)
 
 ### Backend Structure
 
@@ -297,7 +318,8 @@ backend/
 ├── websocket_handlers.py # WebSocket message handling
 ├── connection_manager.py # WebSocket connection management
 ├── goal_pipeline.py     # Core goal processing logic
-├── llm_service.py       # Centralized LLM interactions
+├── llm_service.py       # LLM service facade
+├── llm_provider.py      # Multi-provider abstraction (Ollama/OpenRouter/Anthropic)
 └── models.py           # Data models (Goal, Message, Conversation)
 ```
 
@@ -336,7 +358,7 @@ User Message → Goal Inference → Goal Merging → LLM Response → Goal Evalu
 - **Memory-Only Storage**: No database dependencies for simplicity
 - **Real-Time Updates**: WebSocket-powered live goal tracking
 - **Human-in-the-Loop**: Users can lock/unlock and complete goals manually
-- **LLM-Agnostic**: Designed to work with any LLM provider (currently Anthropic)
+- **LLM-Agnostic**: Designed to work with any LLM provider (Ollama, OpenRouter, Anthropic)
 
 ## 📊 Current Implementation Status
 

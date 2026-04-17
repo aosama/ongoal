@@ -1,0 +1,29 @@
+- generic [ref=e2]:
+  - banner [ref=e3]:
+    - generic [ref=e4]:
+      - heading "OnGoal" [level=1] [ref=e5]
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - generic [ref=e8]: "Goals:"
+          - generic [ref=e9]:
+            - generic [ref=e12]: Question
+            - generic [ref=e15]: Request
+            - generic [ref=e18]: Offer
+            - generic [ref=e21]: Suggestion
+        - generic [ref=e22]:
+          - generic [ref=e23]: "Pipeline:"
+          - button "Infer" [ref=e24] [cursor=pointer]
+          - button "Merge" [ref=e25] [cursor=pointer]
+          - button "Evaluate" [ref=e26] [cursor=pointer]
+  - generic [ref=e27]:
+    - generic [ref=e31]:
+      - textbox "Type your message..." [ref=e32]
+      - button "Send" [disabled] [ref=e33]
+    - generic [ref=e34]:
+      - generic [ref=e35]:
+        - button "Goals" [ref=e36] [cursor=pointer]
+        - button "Timeline" [ref=e37] [cursor=pointer]
+        - button "Events" [ref=e38] [cursor=pointer]
+      - generic [ref=e41]:
+        - text: No goals detected yet.
+        - text: Start a conversation to see extracted goals.

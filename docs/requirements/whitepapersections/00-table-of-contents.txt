@@ -1,0 +1,33 @@
+Table of Contents
+1. Abstract 
+2. 1 Introduction
+3. 2 Related Work 
+1. 2.1 LLM-Based Conversational Agents
+2. 2.2 Sensemaking of LLM Conversations
+3. 2.3 Visualizing LLM Conversations
+4. 3 Designing Goal Tracking and Visualization
+5. 4 The OnGoal System 
+1. 4.1 Modeling Goals Using a Pipeline
+2. 4.2 Visualizing Goals in the Chat UI 
+1. 4.2.1 In-situ goal evaluations
+2. 4.2.2 Ex-situ progress panel
+3. 4.2.3 Individual goal view
+3. 4.3 Highlighting Text to Support Sensemaking
+4. 4.4 Usage Scenario
+5. 4.5 Implementation
+6. 5 User Study 
+1. 5.1 Study Design
+2. 5.2 Study Results 
+1. 5.2.1 Usability findings
+2. 5.2.2 Thematic analysis
+3. 5.2.3 Emergent issues
+7. 6 Discussion 
+1. 6.1 Implications For Design
+2. 6.2 Limitations and Future Work
+8. 7 Conclusion
+9. A LLM Prompts 
+1. A.1 Infer goals
+2. A.2 Merge goals
+3. A.3 Evaluate goals
+4. A.4 Keyphrase extraction
+10. References 

@@ -1,6 +1,7 @@
 """
 OnGoal Backend - FastAPI server with WebSocket support for goal tracking
 """
+import logging
 import os
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +14,14 @@ from backend.websocket_handlers import handle_websocket_connection
 
 # Load environment variables
 load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
 
 # Initialize FastAPI app
 app = FastAPI(title="OnGoal Backend", version="1.0.0")
@@ -45,9 +54,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 if __name__ == "__main__":
-    print("🚀 Starting OnGoal Backend Server...")
-    print("📍 Server URL: http://localhost:8000")
-    print("🔗 WebSocket URL: ws://localhost:8000/ws")
+    logger.info("Starting OnGoal Backend Server on http://localhost:8000")
     uvicorn.run(
         "backend.main:app",
         host="0.0.0.0",

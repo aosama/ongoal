@@ -2,12 +2,15 @@
 OnGoal WebSocket Handlers - Real-time communication with frontend
 """
 import json
+import logging
 from datetime import datetime
 from fastapi import WebSocket, WebSocketDisconnect
 
 from backend.models import Message, Conversation
-from backend.goal_pipeline import infer_goals, merge_goals, evaluate_goal, stream_llm_response
+from backend.goal_pipeline import infer_goals, merge_goals, evaluate_goal, stream_llm_response, extract_keyphrases
 from backend.api_endpoints import get_conversations_store
+
+logger = logging.getLogger(__name__)
 
 
 async def handle_websocket_connection(websocket: WebSocket, manager, conversation_id: str = "default"):
@@ -66,7 +69,7 @@ async def handle_user_message(message_data, conversation_id, conversations, webs
     
     # Stage 1: Goal Inference (if enabled)
     inferred_goals = []
-    if conversation.pipeline_settings.get("infer", True):
+    if conversation.pipeline_settings.infer:
         # Running goal inference
         inferred_goals = await infer_goals(
             user_message, 
@@ -88,7 +91,7 @@ async def handle_user_message(message_data, conversation_id, conversations, webs
     
     # Stage 2: Goal Merging (if enabled and there are existing goals)
     final_goals = inferred_goals
-    if conversation.pipeline_settings.get("merge", True) and conversation.goals and inferred_goals:
+    if conversation.pipeline_settings.merge and conversation.goals and inferred_goals:
         # Running goal merge
         merged_goals = await merge_goals(conversation.goals, inferred_goals)
         # Merge completed
@@ -133,17 +136,14 @@ async def handle_user_message(message_data, conversation_id, conversations, webs
     conversations[conversation_id].messages.append(assistant_msg)
     
     # Stage 3: Goal Evaluation (if enabled and there are active goals)
-    if conversation.pipeline_settings.get("evaluate", True) and conversation.goals and response_text:
-        # Running goal evaluation
+    if conversation.pipeline_settings.evaluate and conversation.goals and response_text:
         evaluations = []
-        
+
         for goal in conversation.goals:
             if not goal.completed:  # Only evaluate active goals
+                # evaluate_goal() updates goal.status and goal.evaluation in-place
                 evaluation = await evaluate_goal(goal, response_text)
                 evaluations.append(evaluation)
-                
-                # Update goal status based on evaluation
-                goal.status = evaluation["category"]
         
         # Send evaluation results to frontend
         if evaluations:
@@ -154,12 +154,22 @@ async def handle_user_message(message_data, conversation_id, conversations, webs
                 "message_id": assistant_message_id
             }, websocket)
 
+    # Stage 4: Keyphrase extraction from assistant response
+    if response_text and len(response_text) > 20:
+        keyphrases = await extract_keyphrases(response_text)
+        if keyphrases:
+            await manager.send_message({
+                "type": "keyphrases_extracted",
+                "keyphrases": keyphrases,
+                "message_id": assistant_message_id
+            }, websocket)
+
 
 async def handle_pipeline_toggle(message_data, conversation_id, conversations, websocket, manager):
     """Handle pipeline stage toggle"""
     stage = message_data["stage"]
     enabled = message_data["enabled"]
-    conversations[conversation_id].pipeline_settings[stage] = enabled
+    setattr(conversations[conversation_id].pipeline_settings, stage, enabled)
 
     await manager.send_message({
         "type": "pipeline_toggled",
@@ -177,6 +187,6 @@ async def handle_get_conversation(conversation_id, conversations, websocket, man
             "id": conversation.id,
             "messages": [msg.model_dump() for msg in conversation.messages],
             "goals": [goal.model_dump() for goal in conversation.goals],
-            "pipeline_settings": conversation.pipeline_settings
+            "pipeline_settings": conversation.pipeline_settings.model_dump()
         }
     }, websocket)

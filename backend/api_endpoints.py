@@ -33,6 +33,17 @@ async def health_check():
     }
 
 
+@router.get("/api/llm-status")
+async def llm_status():
+    """Get detailed LLM provider status"""
+    from backend.llm_service import LLMService
+
+    return {
+        "timestamp": datetime.now().isoformat(),
+        **LLMService.get_service_status()
+    }
+
+
 @router.post("/api/conversations/{conversation_id}/reset")
 async def reset_conversation(conversation_id: str):
     """Reset conversation state - CRITICAL for test isolation"""
@@ -57,7 +68,7 @@ async def get_conversation(conversation_id: str):
             "id": conversation.id,
             "messages": [msg.model_dump() for msg in conversation.messages],
             "goals": [goal.model_dump() for goal in conversation.goals],
-            "pipeline_settings": conversation.pipeline_settings
+            "pipeline_settings": conversation.pipeline_settings.model_dump()
         }
 
     raise HTTPException(status_code=404, detail="Conversation not found")
@@ -229,6 +240,32 @@ async def list_conversations():
         "conversations": conversation_ids,
         "count": len(conversation_ids)
     }
+
+
+@router.post("/api/conversations/{conversation_id}/keyphrases")
+async def extract_keyphrases(conversation_id: str):
+    """Extract keyphrases from the last assistant response (REQ-09-04)"""
+    if conversation_id not in conversations:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    conversation = conversations[conversation_id]
+
+    # Find the last assistant message
+    assistant_messages = [m for m in conversation.messages if m.role == "assistant"]
+    if not assistant_messages:
+        return {"keyphrases": [], "message_id": None}
+
+    last_assistant = assistant_messages[-1]
+
+    from backend.goal_pipeline import extract_keyphrases as _extract_keyphrases
+    keyphrases = await _extract_keyphrases(last_assistant.content)
+
+    return {
+        "keyphrases": keyphrases,
+        "message_id": last_assistant.id,
+        "timestamp": datetime.now().isoformat()
+    }
+
 
 def get_conversations_store():
     """Get reference to conversations storage for websocket handler"""

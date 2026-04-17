@@ -160,13 +160,12 @@ class TestServiceErrorHandling:
         # WHEN
         status = LLMService.get_service_status()
 
-        # THEN
-        assert "service" in status
+        # THEN - Provider-agnostic status fields
+        assert "provider" in status
         assert "available" in status
         assert "model" in status
-        assert "api_key_configured" in status
-        assert "client_initialized" in status
-        assert status["service"] == "Anthropic Claude"
+        assert "cost" in status
+        assert "configured_provider" in status
         assert isinstance(status["available"], bool)
 
     def test_should_handle_memory_storage_operations_gracefully(self):
@@ -305,4 +304,3 @@ class TestServiceErrorHandling:
         if is_available:
             status = LLMService.get_service_status()
             assert status["available"] == True
-            assert status["client_initialized"] == True
