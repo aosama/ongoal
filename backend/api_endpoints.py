@@ -68,10 +68,24 @@ async def get_conversation(conversation_id: str):
             "id": conversation.id,
             "messages": [msg.model_dump() for msg in conversation.messages],
             "goals": [goal.model_dump() for goal in conversation.goals],
+            "alerts": [alert.model_dump() for alert in conversation.alerts],
             "pipeline_settings": conversation.pipeline_settings.model_dump()
         }
 
     raise HTTPException(status_code=404, detail="Conversation not found")
+
+
+@router.get("/api/conversations/{conversation_id}/alerts")
+async def get_alerts(conversation_id: str):
+    """Get all alerts for a conversation"""
+    if conversation_id not in conversations:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    conversation = conversations[conversation_id]
+    return {
+        "alerts": [alert.model_dump() for alert in conversation.alerts],
+        "count": len(conversation.alerts)
+    }
 
 
 # Request/Response models for goal CRUD operations

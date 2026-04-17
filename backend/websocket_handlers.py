@@ -6,8 +6,11 @@ import logging
 from datetime import datetime
 from fastapi import WebSocket, WebSocketDisconnect
 
-from backend.models import Message, Conversation
-from backend.goal_pipeline import infer_goals, merge_goals, evaluate_goal, stream_llm_response, extract_keyphrases
+from backend.models import Message, Conversation, GoalAlert
+from backend.goal_pipeline import (
+    infer_goals, merge_goals, evaluate_goal, stream_llm_response,
+    extract_keyphrases, detect_forgetting, detect_contradiction, detect_derailment,
+)
 from backend.api_endpoints import get_conversations_store
 
 logger = logging.getLogger(__name__)
@@ -164,6 +167,55 @@ async def handle_user_message(message_data, conversation_id, conversations, webs
                 "message_id": assistant_message_id
             }, websocket)
 
+    # Stage 5: Detection alerts (forgetting, contradiction, derailment)
+    new_alerts = []
+
+    # 5a: Forgetting detection — goals repeatedly ignored
+    forgetting_results = await detect_forgetting(conversation.goals, response_text)
+    for item in forgetting_results:
+        alert = GoalAlert(
+            alert_type="forgetting",
+            severity="warning",
+            goal_ids=[item.get("goal_id", "")],
+            message=item.get("reason", "Goal appears forgotten"),
+            suggestion=item.get("suggestion", ""),
+        )
+        new_alerts.append(alert)
+
+    # 5b: Contradiction detection — conflicting goals
+    contradiction_results = await detect_contradiction(conversation.goals)
+    for item in contradiction_results:
+        alert = GoalAlert(
+            alert_type="contradiction",
+            severity="critical",
+            goal_ids=[item.get("goal_id_1", ""), item.get("goal_id_2", "")],
+            message=item.get("reason", "Goals contradict each other"),
+            suggestion=item.get("resolution", ""),
+        )
+        new_alerts.append(alert)
+
+    # 5c: Derailment detection — response off track
+    derailment_result = await detect_derailment(conversation.goals, response_text)
+    if derailment_result:
+        alert = GoalAlert(
+            alert_type="derailment",
+            severity="warning",
+            goal_ids=[g.id for g in conversation.goals if not g.completed],
+            message=derailment_result.get("reason", "Response has derailed from goals"),
+            suggestion=derailment_result.get("suggestion", ""),
+        )
+        new_alerts.append(alert)
+
+    # Store and send alerts
+    if new_alerts:
+        conversation.alerts.extend(new_alerts)
+        alerts_data = [a.model_dump() for a in new_alerts]
+        await manager.send_message({
+            "type": "alerts_detected",
+            "alerts": alerts_data,
+            "message_id": assistant_message_id
+        }, websocket)
+
 
 async def handle_pipeline_toggle(message_data, conversation_id, conversations, websocket, manager):
     """Handle pipeline stage toggle"""
@@ -187,6 +239,7 @@ async def handle_get_conversation(conversation_id, conversations, websocket, man
             "id": conversation.id,
             "messages": [msg.model_dump() for msg in conversation.messages],
             "goals": [goal.model_dump() for goal in conversation.goals],
+            "alerts": [alert.model_dump() for alert in conversation.alerts],
             "pipeline_settings": conversation.pipeline_settings.model_dump()
         }
     }, websocket)

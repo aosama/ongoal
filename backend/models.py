@@ -17,6 +17,7 @@ class GoalEvaluation(BaseModel):
     category: str  # confirm, contradict, ignore
     explanation: str = ""
     examples: List[str] = []
+    confidence: float = 0.0
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
 
     def is_confirmed(self) -> bool:
@@ -27,6 +28,17 @@ class GoalEvaluation(BaseModel):
 
     def is_ignored(self) -> bool:
         return self.category == "ignore"
+
+
+class GoalAlert(BaseModel):
+    """A detection alert for goal anomalies (REQ-03-01/02)"""
+
+    alert_type: str  # forgetting, contradiction, derailment, repetition, breakdown
+    severity: str = "warning"  # info, warning, critical
+    goal_ids: List[str] = []
+    message: str = ""
+    suggestion: str = ""
+    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 
 class Goal(BaseModel):
@@ -68,6 +80,7 @@ class Conversation(BaseModel):
     id: str
     messages: List[Message] = []
     goals: List[Goal] = []
+    alerts: List[GoalAlert] = []
     pipeline_settings: PipelineSettings = Field(default_factory=PipelineSettings)
 
     def get_goal_by_id(self, goal_id: str) -> Optional[Goal]:

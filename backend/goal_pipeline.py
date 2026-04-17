@@ -345,3 +345,138 @@ Assistant response: {assistant_response}"""
         return []
 
 
+async def detect_forgetting(goals: List[Goal], assistant_response: str) -> List[Dict]:
+    """Detect goals that may have been forgotten in the conversation (REQ-03-01-006).
+
+    A goal is considered "forgotten" if it has been repeatedly ignored across
+    multiple assistant responses. Returns a list of alert dicts.
+    """
+    if not goals or not assistant_response:
+        return []
+
+    active_goals = [g for g in goals if not g.completed and not g.locked]
+    repeatedly_ignored = [
+        g for g in active_goals
+        if g.evaluation and g.evaluation.category == "ignore"
+    ]
+
+    if not repeatedly_ignored:
+        return []
+
+    goals_text = "\n".join([f"- {g.id}: {g.text} (ignored {1} time(s))" for g in repeatedly_ignored])
+
+    prompt = f"""You are analyzing whether the following conversation goals have been forgotten by the assistant. A "forgotten" goal is one that has been consistently ignored across responses.
+
+Goals that were ignored in the latest response:
+{goals_text}
+
+Assistant response: {assistant_response}
+
+For each goal that you believe is genuinely being forgotten (not just naturally completed or irrelevant), provide a brief explanation and a suggestion for what the user could do. If none are truly forgotten, return an empty list.
+
+Respond ONLY with valid JSON:
+
+{{
+  "forgotten_goals": [
+    {{"goal_id": "<ID>", "reason": "<REASON>", "suggestion": "<SUGGESTION>"}}
+  ]
+}}"""
+
+    try:
+        response_text = await LLMService.generate_response(prompt, max_tokens=800)
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            data = json.loads(json_match.group())
+            return data.get("forgotten_goals", [])
+        return []
+    except Exception as e:
+        logger.warning("Forgetting detection failed: %s", e)
+        return []
+
+
+async def detect_contradiction(goals: List[Goal]) -> List[Dict]:
+    """Detect contradictions between active goals (REQ-03-01-003).
+
+    Returns pairs of goals that contradict each other with explanation.
+    """
+    if len(goals) < 2:
+        return []
+
+    active_goals = [g for g in goals if not g.completed]
+    if len(active_goals) < 2:
+        return []
+
+    goals_text = "\n".join([f"- {g.id}: {g.text} (type: {g.type})" for g in active_goals])
+
+    prompt = f"""You are analyzing whether any of the following conversation goals contradict each other. Two goals contradict if they cannot both be satisfied simultaneously or if pursuing one would undermine the other.
+
+Goals:
+{goals_text}
+
+For each pair of goals that you believe genuinely contradict each other, provide the goal IDs, the nature of the contradiction, and a suggested resolution. If no goals contradict, return an empty list.
+
+Respond ONLY with valid JSON:
+
+{{
+  "contradictions": [
+    {{"goal_id_1": "<ID_1>", "goal_id_2": "<ID_2>", "reason": "<REASON>", "resolution": "<SUGGESTION>"}}
+  ]
+}}"""
+
+    try:
+        response_text = await LLMService.generate_response(prompt, max_tokens=800)
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            data = json.loads(json_match.group())
+            return data.get("contradictions", [])
+        return []
+    except Exception as e:
+        logger.warning("Contradiction detection failed: %s", e)
+        return []
+
+
+async def detect_derailment(goals: List[Goal], assistant_response: str) -> Optional[Dict]:
+    """Detect if the assistant response has derailed from all tracked goals (REQ-03-02).
+
+    Derailment means the response has drifted away from all active goals
+    without addressing any of them substantively.
+    """
+    active_goals = [g for g in goals if not g.completed]
+    if not active_goals or not assistant_response:
+        return None
+
+    goals_text = "\n".join([f"- {g.id}: {g.text}" for g in active_goals])
+
+    prompt = f"""You are analyzing whether the assistant's response has derailed from the conversation goals. Derailment means the response has drifted away from addressing any of the active goals without substantively engaging with any of them.
+
+Active goals:
+{goals_text}
+
+Assistant response: {assistant_response}
+
+Determine: has the response derailed? If yes, explain how and suggest what the user could do. If no, return derailment: false.
+
+Respond ONLY with valid JSON:
+
+{{
+  "derailment": <true|false>,
+  "reason": "<REASON_IF_TRUE>",
+  "suggestion": "<SUGGESTION_IF_TRUE>"
+}}"""
+
+    try:
+        response_text = await LLMService.generate_response(prompt, max_tokens=600)
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            data = json.loads(json_match.group())
+            if data.get("derailment", False):
+                return {
+                    "reason": data.get("reason", ""),
+                    "suggestion": data.get("suggestion", ""),
+                }
+        return None
+    except Exception as e:
+        logger.warning("Derailment detection failed: %s", e)
+        return None
+
+

@@ -44,6 +44,7 @@ createApp({
         const llmStatus = ref(null);
         const selectedGoalId = ref(null);
         const keyphrases = ref({});
+        const alerts = ref([]);
 
         const pipelineSettings = reactive({
             infer: true,
@@ -98,6 +99,27 @@ createApp({
             selectedGoalId.value = selectedGoalId.value === goalId ? null : goalId;
         };
 
+        const dismissAlert = (index) => {
+            alerts.value.splice(index, 1);
+        };
+
+        const alertIcon = (type) => {
+            switch (type) {
+                case 'forgetting': return '🧠';
+                case 'contradiction': return '⚡';
+                case 'derailment': return '🚂';
+                default: return '⚠️';
+            }
+        };
+
+        const alertSeverityClass = (severity) => {
+            switch (severity) {
+                case 'critical': return 'bg-red-50 border-red-300 text-red-800';
+                case 'warning': return 'bg-amber-50 border-amber-300 text-amber-800';
+                default: return 'bg-blue-50 border-blue-300 text-blue-800';
+            }
+        };
+
         // --- Keyphrases ---
         const fetchKeyphrases = async () => {
             const data = await apiCall(`/api/conversations/${CONVERSATION_ID}/keyphrases`);
@@ -144,6 +166,7 @@ createApp({
                 case 'conversation_state':
                     messages.value = data.conversation.messages;
                     goals.value = data.conversation.goals;
+                    alerts.value = data.conversation.alerts || [];
                     if (data.conversation.pipeline_settings) {
                         const ps = data.conversation.pipeline_settings;
                         pipelineSettings.infer = ps.infer ?? ps.infer ?? true;
@@ -212,6 +235,12 @@ createApp({
                 case 'keyphrases_extracted':
                     if (data.keyphrases && data.keyphrases.length > 0) {
                         keyphrases.value[data.message_id || 'latest'] = data.keyphrases;
+                    }
+                    break;
+
+                case 'alerts_detected':
+                    if (data.alerts && data.alerts.length > 0) {
+                        data.alerts.forEach(a => alerts.value.push(a));
                     }
                     break;
 
@@ -388,10 +417,10 @@ createApp({
         return {
             messages, goals, currentMessage, isStreaming, activeTab,
             pipelineSettings, messagesContainer, timelineData, llmStatus,
-            selectedGoalId, selectedGoal, keyphrases, allKeyphrases,
+            selectedGoalId, selectedGoal, keyphrases, allKeyphrases, alerts,
             goalTypeConfig, evalStyleFor,
             sendMessage, togglePipeline, toggleGoalLock, toggleGoalComplete,
-            selectGoal, fetchKeyphrases,
+            selectGoal, dismissAlert, alertIcon, alertSeverityClass, fetchKeyphrases,
             formatTime, formatMessage, truncateText,
             getGoalNodeClass, getConnectionClass, getEvaluationClass, getEvaluationIcon,
             navigateToMessage, scrollTimeline,
