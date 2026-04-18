@@ -6,7 +6,7 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from backend.models import Conversation, Goal, Message
+from backend.models import Conversation, Goal, Message, GoalAlert
 
 # Create router for API endpoints
 router = APIRouter()
@@ -85,6 +85,72 @@ async def get_alerts(conversation_id: str):
     return {
         "alerts": [alert.model_dump() for alert in conversation.alerts],
         "count": len(conversation.alerts)
+    }
+
+
+@router.delete("/api/conversations/{conversation_id}/alerts")
+async def clear_alerts(conversation_id: str):
+    """Clear all alerts for a conversation"""
+    if conversation_id not in conversations:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    conversation = conversations[conversation_id]
+    cleared_count = len(conversation.alerts)
+    conversation.alerts = []
+
+    return {
+        "status": "success",
+        "message": f"Cleared {cleared_count} alert(s)",
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@router.delete("/api/conversations/{conversation_id}/alerts/{alert_index}")
+async def dismiss_alert(conversation_id: str, alert_index: int):
+    """Dismiss a single alert by index"""
+    if conversation_id not in conversations:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    conversation = conversations[conversation_id]
+    if alert_index < 0 or alert_index >= len(conversation.alerts):
+        raise HTTPException(status_code=404, detail="Alert not found")
+
+    conversation.alerts.pop(alert_index)
+
+    return {
+        "status": "success",
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+class AlertInjectRequest(BaseModel):
+    alert_type: str
+    severity: str = "warning"
+    goal_ids: List[str] = []
+    message: str = ""
+    suggestion: str = ""
+
+
+@router.post("/api/conversations/{conversation_id}/alerts/_inject")
+async def inject_alert(conversation_id: str, req: AlertInjectRequest):
+    """Inject an alert for testing purposes"""
+    if conversation_id not in conversations:
+        conversations[conversation_id] = Conversation(id=conversation_id)
+
+    conversation = conversations[conversation_id]
+    alert = GoalAlert(
+        alert_type=req.alert_type,
+        severity=req.severity,
+        goal_ids=req.goal_ids,
+        message=req.message,
+        suggestion=req.suggestion,
+    )
+    conversation.alerts.append(alert)
+
+    return {
+        "status": "success",
+        "alert": alert.model_dump(),
+        "timestamp": datetime.now().isoformat()
     }
 
 
@@ -281,6 +347,132 @@ async def extract_keyphrases(conversation_id: str):
     }
 
 
+@router.get("/api/conversations/{conversation_id}/sentence-similarity")
+async def get_sentence_similarity(conversation_id: str):
+    """Get similar and unique sentences across assistant responses (REQ-04-03-006/007)"""
+    if conversation_id not in conversations:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    conversation = conversations[conversation_id]
+    assistant_messages = [m for m in conversation.messages if m.role == "assistant"]
+
+    if len(assistant_messages) < 2:
+        return {"similar_sentences": [], "unique_sentences": [], "message_count": len(assistant_messages)}
+
+    import re as _re
+    sentence_map = []
+    for msg in assistant_messages:
+        sentences = [s.strip() for s in _re.split(r'(?<=[.!?])\s+', msg.content) if len(s.strip()) > 20]
+        for s in sentences:
+            sentence_map.append({"text": s, "message_id": msg.id})
+
+    if len(sentence_map) < 2:
+        return {"similar_sentences": [], "unique_sentences": sentence_map, "message_count": len(assistant_messages)}
+
+    sentences_text = "\n".join(f"{i+1}. {s['text']}" for i, s in enumerate(sentence_map))
+
+    from backend.llm_service import LLMService
+    prompt = f"""You are comparing sentences from multiple assistant responses. Group sentences that express substantially the same idea into "similar" groups. Sentences that are unique (no matching sentence in other responses) should be listed as "unique".
+
+Sentences:
+{sentences_text}
+
+Respond ONLY with valid JSON:
+
+{{
+  "similar_groups": [
+    {{"sentence_indices": [1, 3], "theme": "<shared_theme>"}}
+  ],
+  "unique_indices": [2, 5]
+}}"""
+
+    try:
+        response_text = await LLMService.generate_response(prompt, max_tokens=1000)
+        import json as _json
+        json_match = _re.search(r'\{.*\}', response_text, _re.DOTALL)
+        if json_match:
+            data = _json.loads(json_match.group())
+            similar = []
+            for group in data.get("similar_groups", []):
+                indices = group.get("sentence_indices", [])
+                sentences = [sentence_map[i-1] for i in indices if 0 < i <= len(sentence_map)]
+                similar.append({
+                    "theme": group.get("theme", ""),
+                    "sentences": sentences,
+                })
+            unique = [sentence_map[i-1] for i in data.get("unique_indices", []) if 0 < i <= len(sentence_map)]
+            return {
+                "similar_sentences": similar,
+                "unique_sentences": unique,
+                "message_count": len(assistant_messages),
+            }
+    except Exception:
+        pass
+
+    return {"similar_sentences": [], "unique_sentences": [], "message_count": len(assistant_messages)}
+
+
+@router.get("/api/conversations/{conversation_id}/goal-progress")
+async def get_goal_progress(conversation_id: str):
+    """Get goal progress tracking across messages (REQ-03-02-001, REQ-03-02-004)"""
+    if conversation_id not in conversations:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    conversation = conversations[conversation_id]
+    from backend.goal_pipeline import compute_goal_progress
+    progress = compute_goal_progress(conversation)
+
+    return {
+        "progress": progress,
+        "goal_count": len(progress),
+    }
+
+
 def get_conversations_store():
     """Get reference to conversations storage for websocket handler"""
     return conversations
+
+
+@router.get("/api/conversations/{conversation_id}/goal-history")
+async def get_goal_history(conversation_id: str):
+    """Get goal mutation history for restore functionality (REQ-04-02-205)"""
+    if conversation_id not in conversations:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    conversation = conversations[conversation_id]
+    return {
+        "goal_history": [entry.model_dump() for entry in conversation.goal_history],
+        "turn_count": len([m for m in conversation.messages if m.role == "user"])
+    }
+
+
+@router.post("/api/conversations/{conversation_id}/goal-history/{entry_index}/restore")
+async def restore_goal_from_history(conversation_id: str, entry_index: int):
+    """Restore a previous goal version from history (REQ-04-02-205)"""
+    if conversation_id not in conversations:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    conversation = conversations[conversation_id]
+    if entry_index < 0 or entry_index >= len(conversation.goal_history):
+        raise HTTPException(status_code=400, detail="Invalid history entry index")
+
+    entry = conversation.goal_history[entry_index]
+    restored_goal = Goal(
+        id=entry.goal_id,
+        text=entry.goal_text,
+        type=entry.goal_type,
+        source_message_id="restored",
+        locked=False,
+    )
+
+    existing = conversation.get_goal_by_id(entry.goal_id)
+    if existing:
+        existing.text = entry.goal_text
+        existing.type = entry.goal_type
+    else:
+        conversation.goals.append(restored_goal)
+
+    return {
+        "goal": restored_goal.model_dump(),
+        "message": f"Restored goal {entry.goal_id} from turn {entry.turn}"
+    }

@@ -27,7 +27,7 @@ Use this file like a cache.
 ## Maintenance snapshot
 
 - Last verified: 2026-04-17
-- Verification scope: runtime scripts, backend/frontend startup, LLM provider abstraction layer (Ollama/OpenRouter/Anthropic), goal pipeline (infer/merge/evaluate/keyphrase), WebSocket + REST API surface, frontend goal detail panel + Events tab + keyphrase display, test suite (63/63 passing), conftest server fixtures, pytest.ini configuration.
+- Verification scope: runtime scripts, backend/frontend startup, LLM provider abstraction layer (Ollama/OpenRouter/Anthropic), goal pipeline (infer/merge/evaluate/keyphrase/detection), advanced detection (repetition/fixation/breakdown/progress), WebSocket + REST API surface (including goal-progress, sentence-similarity, goal-history), frontend goal detail panel + Events tab + keyphrase display + sentence highlighting modes, test suite (91/91 passing), conftest server fixtures, pytest.ini configuration.
 
 ## 1. High-signal docs (read-first index)
 
@@ -71,15 +71,15 @@ Key architectural facts:
 | Module | Path | Responsibility |
 |---|---|---|
 | Backend app | `backend/main.py` | FastAPI app, CORS, WebSocket endpoints, uvicorn startup |
-| Models | `backend/models.py` | Pydantic v2 models: `Goal`, `GoalEvaluation`, `Message`, `Conversation`, `PipelineSettings` |
-| REST API | `backend/api_endpoints.py` | All REST routes, in-memory conversations store, keyphrase endpoint |
-| WebSocket | `backend/websocket_handlers.py` | WS message dispatch, pipeline orchestration, keyphrase extraction after response |
+| Models | `backend/models.py` | Pydantic v2 models: `Goal`, `GoalEvaluation`, `Message`, `Conversation`, `PipelineSettings`, `GoalHistoryEntry` |
+| REST API | `backend/api_endpoints.py` | All REST routes, in-memory conversations store, keyphrase/goal-progress/sentence-similarity endpoints |
+| WebSocket | `backend/websocket_handlers.py` | WS message dispatch, pipeline orchestration, keyphrase + detection after response |
 | Connections | `backend/connection_manager.py` | WS connection lifecycle (connect/disconnect/send) |
-| Goal pipeline | `backend/goal_pipeline.py` | `infer_goals()`, `merge_goals()`, `evaluate_goal()`, `extract_keyphrases()`, `stream_llm_response()` |
+| Goal pipeline | `backend/goal_pipeline.py` | `infer_goals()`, `merge_goals()`, `evaluate_goal()`, `extract_keyphrases()`, `stream_llm_response()`, `detect_forgetting()`, `detect_contradiction()`, `detect_derailment()`, `detect_repetition()`, `detect_fixation()`, `detect_breakdown()`, `compute_goal_progress()` |
 | LLM service | `backend/llm_service.py` | Static-method façade delegating to active provider |
 | LLM providers | `backend/llm_provider.py` | Abstract `LLMProvider` + Ollama/OpenRouter/Anthropic implementations, retry logic, cloud detection |
-| Frontend HTML | `frontend/index.html` | SPA shell, Tailwind CSS, goal detail panel, Events tab with keyphrases |
-| Frontend logic | `frontend/app.js` | Vue 3 Composition API: WebSocket + REST, goal selection, keyphrase display, evaluation detail |
+| Frontend HTML | `frontend/index.html` | SPA shell, Tailwind CSS, goal detail panel, Events tab with keyphrases + sentence modes |
+| Frontend logic | `frontend/app.js` | Vue 3 Composition API: WebSocket + REST, goal selection, keyphrase/sentence display, evaluation detail, progress bars |
 
 ## 4. Runtime entry points
 
@@ -131,7 +131,7 @@ Fastest places to start reading when diagnosing runtime behavior:
 
 - App bootstrap + WebSocket routes: `backend/main.py`
 - All REST endpoints + conversations store: `backend/api_endpoints.py`
-- Goal pipeline (infer/merge/evaluate/stream): `backend/goal_pipeline.py`
+- Goal pipeline (infer/merge/evaluate/stream/detect/progress): `backend/goal_pipeline.py`
 - LLM provider factory + implementations: `backend/llm_provider.py`
 - LLM service façade: `backend/llm_service.py`
 - Data models: `backend/models.py`

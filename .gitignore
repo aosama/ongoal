@@ -89,6 +89,10 @@ yarn-error.log*
 # Browser test results
 test-results/
 playwright-report/
+.playwright-mcp/
+
+# QA screenshots (root-level)
+/*.png
 
 # Application specific
 regression_report.html
@@ -99,3 +103,5 @@ CLAUDE.md
 claude.md
 .claude
 /.claude
+AGENTS.md
+.agents/

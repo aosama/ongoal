@@ -74,6 +74,19 @@ class PipelineSettings(BaseModel):
     evaluate: bool = True
 
 
+class GoalHistoryEntry(BaseModel):
+    """A record of a goal mutation for history/restore (REQ-04-02-205)"""
+
+    turn: int
+    operation: str  # keep, combine, replace, infer
+    goal_id: str
+    goal_text: str
+    goal_type: str
+    previous_goal_ids: List[str] = []
+    previous_goal_texts: List[str] = []
+    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
+
+
 class Conversation(BaseModel):
     """A conversation with tracked goals"""
 
@@ -82,6 +95,7 @@ class Conversation(BaseModel):
     goals: List[Goal] = []
     alerts: List[GoalAlert] = []
     pipeline_settings: PipelineSettings = Field(default_factory=PipelineSettings)
+    goal_history: List[GoalHistoryEntry] = []
 
     def get_goal_by_id(self, goal_id: str) -> Optional[Goal]:
         """Find a goal by its ID"""

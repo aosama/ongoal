@@ -10,6 +10,7 @@ from backend.models import Message, Conversation, GoalAlert
 from backend.goal_pipeline import (
     infer_goals, merge_goals, evaluate_goal, stream_llm_response,
     extract_keyphrases, detect_forgetting, detect_contradiction, detect_derailment,
+    detect_repetition, detect_fixation, compute_goal_progress, detect_breakdown,
 )
 from backend.api_endpoints import get_conversations_store
 
@@ -18,37 +19,30 @@ logger = logging.getLogger(__name__)
 
 async def handle_websocket_connection(websocket: WebSocket, manager, conversation_id: str = "default"):
     """Handle WebSocket connection and message processing"""
-    # WebSocket connection attempt
     await manager.connect(websocket)
-    # WebSocket connected successfully for conversation: {conversation_id}
-    
-    # Get reference to conversations storage
+
     conversations = get_conversations_store()
-    
-    # Initialize conversation if not exists
+
     if conversation_id not in conversations:
         conversations[conversation_id] = Conversation(id=conversation_id)
-    
+
     try:
         while True:
-            # Receive message from frontend
             data = await websocket.receive_text()
             message_data = json.loads(data)
-            # Received WebSocket message
-            
+
             if message_data["type"] == "user_message":
                 await handle_user_message(message_data, conversation_id, conversations, websocket, manager)
-            
+
             elif message_data["type"] == "toggle_pipeline":
                 await handle_pipeline_toggle(message_data, conversation_id, conversations, websocket, manager)
-            
+
             elif message_data["type"] == "get_conversation":
                 await handle_get_conversation(conversation_id, conversations, websocket, manager)
-    
+
     except WebSocketDisconnect:
         manager.disconnect(websocket)
-    except Exception as e:
-        # WebSocket error occurred
+    except Exception:
         manager.disconnect(websocket)
 
 
@@ -56,9 +50,7 @@ async def handle_user_message(message_data, conversation_id, conversations, webs
     """Handle user message and run goal pipeline"""
     user_message = message_data["message"]
     message_id = f"msg_{len(conversations[conversation_id].messages)}"
-    # Received user message
-    
-    # Store user message
+
     user_msg = Message(
         id=message_id,
         content=user_message,
@@ -66,98 +58,108 @@ async def handle_user_message(message_data, conversation_id, conversations, webs
         timestamp=datetime.now().isoformat()
     )
     conversations[conversation_id].messages.append(user_msg)
-    
-    # Run goal pipeline with exact prompts from requirements
+
     conversation = conversations[conversation_id]
-    
-    # Stage 1: Goal Inference (if enabled)
+
+    # Stage 1: Goal Inference
     inferred_goals = []
     if conversation.pipeline_settings.infer:
-        # Running goal inference
         inferred_goals = await infer_goals(
-            user_message, 
-            message_id, 
-            len(conversation.goals)
+            user_message, message_id, len(conversation.goals)
         )
-        # Found inferred goals
         user_msg.goals = inferred_goals
-        
-        # Send inferred goals to frontend for timeline population
+
         if inferred_goals:
             inferred_goals_data = [goal.model_dump() for goal in inferred_goals]
-            # Sending inferred goals to timeline
             await manager.send_message({
-                "type": "goals_inferred", 
+                "type": "goals_inferred",
                 "goals": inferred_goals_data,
                 "message_id": message_id
             }, websocket)
-    
-    # Stage 2: Goal Merging (if enabled and there are existing goals)
+
+    # Stage 2: Goal Merging
     final_goals = inferred_goals
     if conversation.pipeline_settings.merge and conversation.goals and inferred_goals:
-        # Running goal merge
-        merged_goals = await merge_goals(conversation.goals, inferred_goals)
-        # Merge completed
-        
-        # Replace conversation goals with merged result
+        old_goals_snapshot = {g.id: g.model_copy() for g in conversation.goals}
+        merged_goals = await merge_goals(conversation.goals, inferred_goals, message_id)
+
+        turn_num = len([m for m in conversation.messages if m.role == 'user'])
+        for mg in merged_goals:
+            prev_ids = []
+            prev_texts = []
+            for oid, og in old_goals_snapshot.items():
+                if og.text in mg.text or mg.text in og.text:
+                    prev_ids.append(oid)
+                    prev_texts.append(og.text)
+            for ig in inferred_goals:
+                if ig.id not in old_goals_snapshot and (ig.text in mg.text or mg.text in ig.text):
+                    if ig.id not in prev_ids:
+                        prev_ids.append(ig.id)
+                        prev_texts.append(ig.text)
+            op = 'keep'
+            if len(prev_ids) > 1:
+                op = 'combine'
+            elif prev_ids and prev_ids[0] != mg.id:
+                op = 'replace'
+            if not prev_ids:
+                op = 'infer'
+            from backend.models import GoalHistoryEntry
+            conversation.goal_history.append(GoalHistoryEntry(
+                turn=turn_num,
+                operation=op,
+                goal_id=mg.id,
+                goal_text=mg.text,
+                goal_type=mg.type,
+                previous_goal_ids=prev_ids,
+                previous_goal_texts=prev_texts,
+            ))
+
         conversation.goals = merged_goals
         final_goals = merged_goals
     elif inferred_goals:
-        # Just add new goals if merge is disabled
         conversation.goals.extend(inferred_goals)
         final_goals = conversation.goals
-    
-    # Send goals to frontend after inference/merge
+
     if final_goals:
         goals_data = [goal.model_dump() for goal in final_goals]
-        # Sending goals to frontend
         await manager.send_message({
             "type": "goals_updated",
             "goals": goals_data,
             "message_id": message_id
         }, websocket)
-    
+
     # Generate and stream LLM response
     assistant_message_id = f"msg_{len(conversations[conversation_id].messages)}"
-    
-    # Start streaming response
+
     response_text = await stream_llm_response(
-        user_message, 
-        manager,
-        websocket, 
-        assistant_message_id,
-        conversation.messages
+        user_message, manager, websocket, assistant_message_id, conversation.messages
     )
-    
-    # Store assistant message
+
     assistant_msg = Message(
         id=assistant_message_id,
         content=response_text,
-        role="assistant", 
+        role="assistant",
         timestamp=datetime.now().isoformat()
     )
     conversations[conversation_id].messages.append(assistant_msg)
-    
-    # Stage 3: Goal Evaluation (if enabled and there are active goals)
+
+    # Stage 3: Goal Evaluation
     if conversation.pipeline_settings.evaluate and conversation.goals and response_text:
         evaluations = []
 
         for goal in conversation.goals:
-            if not goal.completed:  # Only evaluate active goals
-                # evaluate_goal() updates goal.status and goal.evaluation in-place
+            if not goal.completed:
                 evaluation = await evaluate_goal(goal, response_text)
                 evaluations.append(evaluation)
-        
-        # Send evaluation results to frontend
+
         if evaluations:
-            # Sending evaluations to frontend
             await manager.send_message({
                 "type": "goals_evaluated",
                 "evaluations": evaluations,
                 "message_id": assistant_message_id
             }, websocket)
 
-    # Stage 4: Keyphrase extraction from assistant response
+    # Stage 4: Keyphrase extraction
     if response_text and len(response_text) > 20:
         keyphrases = await extract_keyphrases(response_text)
         if keyphrases:
@@ -167,10 +169,10 @@ async def handle_user_message(message_data, conversation_id, conversations, webs
                 "message_id": assistant_message_id
             }, websocket)
 
-    # Stage 5: Detection alerts (forgetting, contradiction, derailment)
+    # Stage 5: Detection alerts
     new_alerts = []
 
-    # 5a: Forgetting detection — goals repeatedly ignored
+    # 5a: Forgetting detection
     forgetting_results = await detect_forgetting(conversation.goals, response_text)
     for item in forgetting_results:
         alert = GoalAlert(
@@ -182,7 +184,7 @@ async def handle_user_message(message_data, conversation_id, conversations, webs
         )
         new_alerts.append(alert)
 
-    # 5b: Contradiction detection — conflicting goals
+    # 5b: Contradiction detection
     contradiction_results = await detect_contradiction(conversation.goals)
     for item in contradiction_results:
         alert = GoalAlert(
@@ -194,7 +196,7 @@ async def handle_user_message(message_data, conversation_id, conversations, webs
         )
         new_alerts.append(alert)
 
-    # 5c: Derailment detection — response off track
+    # 5c: Derailment detection
     derailment_result = await detect_derailment(conversation.goals, response_text)
     if derailment_result:
         alert = GoalAlert(
@@ -206,7 +208,43 @@ async def handle_user_message(message_data, conversation_id, conversations, webs
         )
         new_alerts.append(alert)
 
-    # Store and send alerts
+    # 5d: Repetition detection
+    repetition_result = await detect_repetition(conversation.messages)
+    if repetition_result:
+        alert = GoalAlert(
+            alert_type="repetition",
+            severity="warning",
+            goal_ids=[g.id for g in conversation.goals if not g.completed],
+            message=repetition_result.get("repeated_content", "Assistant is repeating content"),
+            suggestion=repetition_result.get("suggestion", ""),
+        )
+        new_alerts.append(alert)
+
+    # 5e: Fixation detection
+    fixation_result = await detect_fixation(conversation.goals)
+    if fixation_result:
+        goal_ids = fixation_result.get("fixated_goal_ids", []) + fixation_result.get("neglected_goal_ids", [])
+        alert = GoalAlert(
+            alert_type="fixation",
+            severity="warning",
+            goal_ids=goal_ids,
+            message=fixation_result.get("reason", "Assistant shows goal fixation"),
+            suggestion=fixation_result.get("suggestion", ""),
+        )
+        new_alerts.append(alert)
+
+    # 5f: Communication breakdown detection
+    breakdown_result = await detect_breakdown(conversation.messages, conversation.goals)
+    if breakdown_result:
+        alert = GoalAlert(
+            alert_type="breakdown",
+            severity="critical",
+            goal_ids=breakdown_result.get("repeated_goal_ids", []),
+            message=breakdown_result.get("reason", "Communication breakdown detected"),
+            suggestion=breakdown_result.get("suggestion", ""),
+        )
+        new_alerts.append(alert)
+
     if new_alerts:
         conversation.alerts.extend(new_alerts)
         alerts_data = [a.model_dump() for a in new_alerts]
@@ -214,6 +252,13 @@ async def handle_user_message(message_data, conversation_id, conversations, webs
             "type": "alerts_detected",
             "alerts": alerts_data,
             "message_id": assistant_message_id
+        }, websocket)
+
+    progress = compute_goal_progress(conversation)
+    if progress:
+        await manager.send_message({
+            "type": "goal_progress_updated",
+            "progress": progress,
         }, websocket)
 
 
@@ -240,6 +285,8 @@ async def handle_get_conversation(conversation_id, conversations, websocket, man
             "messages": [msg.model_dump() for msg in conversation.messages],
             "goals": [goal.model_dump() for goal in conversation.goals],
             "alerts": [alert.model_dump() for alert in conversation.alerts],
-            "pipeline_settings": conversation.pipeline_settings.model_dump()
+            "pipeline_settings": conversation.pipeline_settings.model_dump(),
+            "goal_history": [entry.model_dump() for entry in conversation.goal_history],
+            "goal_progress": compute_goal_progress(conversation),
         }
     }, websocket)

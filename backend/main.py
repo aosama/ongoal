@@ -27,9 +27,11 @@ logging.basicConfig(
 app = FastAPI(title="OnGoal Backend", version="1.0.0")
 
 # CORS middleware for Vue.js frontend
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:8080,http://localhost:3000").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8080", "http://localhost:3000"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

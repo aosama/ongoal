@@ -11,7 +11,7 @@ Implements the 4 LLM-powered pipeline stages defined in:
 import json
 import logging
 import re
-from typing import List, Dict
+from typing import List, Dict, Optional
 from datetime import datetime
 
 from dotenv import load_dotenv
@@ -46,8 +46,7 @@ Human dialogue: {message}"""
     for attempt in range(2):
         try:
             response_text = await LLMService.generate_response(inference_prompt, max_tokens=1000)
-            
-            # Extract JSON from response
+
             json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
             if json_match:
                 response_data = json.loads(json_match.group())
@@ -83,25 +82,21 @@ Human dialogue: {message}"""
     return []
 
 
-async def merge_goals(old_goals: List[Goal], new_goals: List[Goal]) -> List[Goal]:
+async def merge_goals(old_goals: List[Goal], new_goals: List[Goal], current_message_id: str = "") -> List[Goal]:
     """Merge old and new goals, respecting locked goals"""
     
     if not new_goals:
         return old_goals
-    
+
     if not old_goals:
         return new_goals
-    
-    # Separate locked goals — they are excluded from merge
+
     locked_goals = [g for g in old_goals if g.locked]
     mergeable_old = [g for g in old_goals if not g.locked]
-    
-    # If no mergeable old goals, just combine locked + new
+
     if not mergeable_old:
         return locked_goals + new_goals
-    
-    
-    # Prepare goal lists as numbered strings
+
     old_goals_str_list = "\n".join([f"{i+1}. {goal.text}" for i, goal in enumerate(mergeable_old)])
     new_goals_str_list = "\n".join([f"{i+1}. {goal.text}" for i, goal in enumerate(new_goals)])
     
@@ -148,8 +143,7 @@ Please respond ONLY with a valid JSON in the following format:
 
         json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
         operations = json.loads(json_match.group()).get("operations", []) if json_match else []
-        
-        # Build merged goals with unique IDs
+
         merged_goals = []
         all_mergeable = mergeable_old + new_goals
         goal_counter = 0
@@ -180,15 +174,14 @@ Please respond ONLY with a valid JSON in the following format:
                 id=f"G{goal_counter}",
                 text=updated_goal_text,
                 type=source_goal.type,
-                source_message_id=source_goal.source_message_id,
+                source_message_id=current_message_id or source_goal.source_message_id,
                 locked=False,
                 completed=source_goal.completed,
                 created_at=datetime.now().isoformat()
             )
             goal_counter += 1
             merged_goals.append(merged_goal)
-        
-        # Re-add locked goals to the result
+
         result = locked_goals + (merged_goals if merged_goals else mergeable_old + new_goals)
         return result
         
@@ -232,12 +225,14 @@ Assistant response: {assistant_response}"""
             goal.status = evaluation.category
             return evaluation.model_dump()
 
-        # Fallback when JSON parse fails
-        fallback = GoalEvaluation(goal_id=goal.id, category="ignore",
-                                  explanation="Unable to evaluate goal")
-        goal.evaluation = fallback
-        goal.status = "ignore"
-        return fallback.model_dump()
+        else:
+            fallback = GoalEvaluation(
+                goal_id=goal.id, category="ignore",
+                explanation="Unable to evaluate goal",
+            )
+            goal.evaluation = fallback
+            goal.status = "ignore"
+            return fallback.model_dump()
 
     except Exception as e:
         logger.warning("Goal evaluation failed for %s: %s", goal.id, e)
@@ -249,9 +244,7 @@ Assistant response: {assistant_response}"""
 
 
 async def stream_llm_response(message: str, connection_manager, websocket, message_id: str, conversation_messages: List):
-    """Stream LLM response using Anthropic Claude"""
-    
-    # Check if LLM service is available
+    """Stream LLM response using the configured provider"""
     if not LLMService.is_available():
         error_msg = "LLM service unavailable - API key not configured"
         await connection_manager.send_message({
@@ -259,40 +252,32 @@ async def stream_llm_response(message: str, connection_manager, websocket, messa
             "message": error_msg
         }, websocket)
         return error_msg
-    
+
     try:
-        # Build conversation history for LLM context
         messages_for_llm = []
-        
+
         if conversation_messages:
-            # Include all previous messages for context
             for msg in conversation_messages:
                 messages_for_llm.append({
                     "role": msg.role,
                     "content": msg.content
                 })
-        
-        # Add the current user message
+
         messages_for_llm.append({
-            "role": "user", 
+            "role": "user",
             "content": message
         })
-        
-        # Sending messages to LLM for context
-        
-        # Start streaming response using centralized service
+
         full_response = ""
         async for text_chunk in LLMService.generate_streaming_response(messages_for_llm, max_tokens=2000):
             full_response += text_chunk
 
-            # Send chunk to frontend
             await connection_manager.send_message({
                 "type": "llm_response_chunk",
                 "text": text_chunk,
                 "message_id": message_id
             }, websocket)
-        
-        # Send completion signal
+
         await connection_manager.send_message({
             "type": "llm_response_complete",
             "message_id": message_id,
@@ -302,7 +287,6 @@ async def stream_llm_response(message: str, connection_manager, websocket, messa
         return full_response
 
     except Exception as e:
-        # Error in LLM streaming - log and send user-friendly error
         logger.error("LLM streaming error: %s", e)
         error_msg = "Unable to generate response. Please check your API key configuration."
         await connection_manager.send_message({
@@ -433,6 +417,237 @@ Respond ONLY with valid JSON:
     except Exception as e:
         logger.warning("Contradiction detection failed: %s", e)
         return []
+
+
+async def detect_breakdown(conversation_messages: List, goals: List[Goal]) -> Optional[Dict]:
+    """Detect communication breakdown when user rephrases the same unmet goal (REQ-03-01-007).
+
+    A breakdown occurs when the user sends multiple messages addressing the
+    same goal that the assistant keeps ignoring or misunderstanding.
+    """
+    user_messages = [m for m in conversation_messages if m.role == "user"]
+    if len(user_messages) < 2:
+        return None
+
+    ignored_goals = [g for g in goals if not g.completed and g.status == "ignore"]
+    if not ignored_goals:
+        return None
+
+    recent_user = user_messages[-4:]
+    user_texts = "\n".join(f"Message {i+1}: {m.content}" for i, m in enumerate(recent_user))
+    ignored_text = "\n".join(f"- {g.id}: {g.text}" for g in ignored_goals)
+
+    prompt = f"""You are analyzing whether there is a communication breakdown in this conversation. A breakdown occurs when the user repeatedly addresses the same goal but the assistant keeps ignoring or misunderstanding it.
+
+Recent user messages:
+{user_texts}
+
+Goals that were ignored in the latest evaluation:
+{ignored_text}
+
+Determine: is there a communication breakdown? Look for the user rephrasing, restating, or re-asking about the same topic that keeps being ignored. If yes, explain the breakdown and suggest what the user could do. If no, return breakdown: false.
+
+Respond ONLY with valid JSON:
+
+{{
+  "breakdown": <true|false>,
+  "reason": "<REASON>",
+  "repeated_goal_ids": ["<ID>"],
+  "suggestion": "<SUGGESTION>"
+}}"""
+
+    try:
+        response_text = await LLMService.generate_response(prompt, max_tokens=600)
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            data = json.loads(json_match.group())
+            if data.get("breakdown", False):
+                return {
+                    "reason": data.get("reason", ""),
+                    "repeated_goal_ids": data.get("repeated_goal_ids", []),
+                    "suggestion": data.get("suggestion", ""),
+                }
+        return None
+    except Exception as e:
+        logger.warning("Breakdown detection failed: %s", e)
+        return None
+
+
+async def detect_repetition(conversation_messages: List) -> Optional[Dict]:
+    """Detect if the LLM is repeating content across recent responses (REQ-03-02-006).
+
+    Compares the last N assistant responses. If significant repetition is
+    found, returns an alert dict with details.
+    """
+    assistant_responses = [m for m in conversation_messages if m.role == "assistant"]
+    if len(assistant_responses) < 2:
+        return None
+
+    recent = assistant_responses[-3:]
+    responses_text = "\n\n---\n\n".join(
+        f"Response {i+1}:\n{m.content}" for i, m in enumerate(recent)
+    )
+
+    prompt = f"""You are analyzing whether the following assistant responses contain significant repetition. Repetition means the assistant is producing substantially similar content, restating the same points, or providing redundant information across multiple responses.
+
+{responses_text}
+
+Determine: is there significant repetition? If yes, describe what is repeated and suggest what the user could do differently. If no, return repetition: false.
+
+Respond ONLY with valid JSON:
+
+{{
+  "repetition": <true|false>,
+  "repeated_content": "<WHAT_IS_REPEATED>",
+  "suggestion": "<SUGGESTION_FOR_USER>"
+}}"""
+
+    try:
+        response_text = await LLMService.generate_response(prompt, max_tokens=600)
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            data = json.loads(json_match.group())
+            if data.get("repetition", False):
+                return {
+                    "repeated_content": data.get("repeated_content", ""),
+                    "suggestion": data.get("suggestion", ""),
+                }
+        return None
+    except Exception as e:
+        logger.warning("Repetition detection failed: %s", e)
+        return None
+
+
+async def detect_fixation(goals: List[Goal]) -> Optional[Dict]:
+    """Detect if the LLM is fixating on a single goal while neglecting others (REQ-03-03-002).
+
+    Fixation means one goal is repeatedly confirmed while others are
+    consistently ignored, suggesting unbalanced attention.
+    """
+    active_goals = [g for g in goals if not g.completed]
+    if len(active_goals) < 2:
+        return None
+
+    confirmed_goals = [g for g in active_goals if g.status == "confirm"]
+    ignored_goals = [g for g in active_goals if g.status == "ignore"]
+
+    if not confirmed_goals or not ignored_goals:
+        return None
+
+    goals_summary = "\n".join(
+        f"- {g.id}: {g.text} (status: {g.status or 'unevaluated'})"
+        for g in active_goals
+    )
+
+    prompt = f"""You are analyzing whether the assistant shows goal fixation — excessively focusing on some goals while consistently neglecting others.
+
+Current goals and their status:
+{goals_summary}
+
+Determine: is there significant fixation? A fixation pattern means one or a few goals are always confirmed while others are always ignored across multiple turns. If yes, describe the fixation and suggest what the user could do. If no, return fixation: false.
+
+Respond ONLY with valid JSON:
+
+{{
+  "fixation": <true|false>,
+  "fixated_goal_ids": ["<ID_1>"],
+  "neglected_goal_ids": ["<ID_2>"],
+  "reason": "<REASON>",
+  "suggestion": "<SUGGESTION>"
+}}"""
+
+    try:
+        response_text = await LLMService.generate_response(prompt, max_tokens=600)
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            data = json.loads(json_match.group())
+            if data.get("fixation", False):
+                return {
+                    "fixated_goal_ids": data.get("fixated_goal_ids", []),
+                    "neglected_goal_ids": data.get("neglected_goal_ids", []),
+                    "reason": data.get("reason", ""),
+                    "suggestion": data.get("suggestion", ""),
+                }
+        return None
+    except Exception as e:
+        logger.warning("Fixation detection failed: %s", e)
+        return None
+
+
+def compute_goal_progress(conversation) -> List[Dict]:
+    """Compute goal progress tracking across all messages (REQ-03-02-001, REQ-03-02-004).
+
+    For each active goal, counts confirm/ignore/contradict across all
+    evaluations and derives a progress summary with completion status.
+    """
+    progress = []
+    for goal in conversation.goals:
+        if goal.completed:
+            progress.append({
+                "goal_id": goal.id,
+                "goal_text": goal.text,
+                "confirm_count": 0,
+                "ignore_count": 0,
+                "contradict_count": 0,
+                "total_evaluations": 0,
+                "progress_pct": 100,
+                "completion_status": "completed_manual",
+            })
+            continue
+
+        confirm_count = 0
+        ignore_count = 0
+        contradict_count = 0
+
+        for msg in conversation.messages:
+            if msg.role == "assistant" and msg.goals:
+                for msg_goal in msg.goals:
+                    if msg_goal.id == goal.id and msg_goal.evaluation:
+                        cat = msg_goal.evaluation.category
+                        if cat == "confirm":
+                            confirm_count += 1
+                        elif cat == "ignore":
+                            ignore_count += 1
+                        elif cat == "contradict":
+                            contradict_count += 1
+
+        if goal.evaluation:
+            current = goal.evaluation.category
+            if current == "confirm":
+                confirm_count += 1
+            elif current == "ignore":
+                ignore_count += 1
+            elif current == "contradict":
+                contradict_count += 1
+
+        total = confirm_count + ignore_count + contradict_count
+        if total == 0:
+            pct = 0
+        else:
+            pct = int((confirm_count / total) * 100)
+
+        if confirm_count >= 2 and ignore_count == 0 and contradict_count == 0:
+            completion_status = "likely_complete"
+        elif confirm_count >= 1 and pct >= 60:
+            completion_status = "progressing"
+        elif ignore_count > confirm_count:
+            completion_status = "at_risk"
+        elif contradict_count > 0:
+            completion_status = "contradicted"
+        else:
+            completion_status = "active"
+
+        progress.append({
+            "goal_id": goal.id,
+            "goal_text": goal.text,
+            "confirm_count": confirm_count,
+            "ignore_count": ignore_count,
+            "contradict_count": contradict_count,
+            "total_evaluations": total,
+            "progress_pct": pct,
+            "completion_status": completion_status,
+        })
+    return progress
 
 
 async def detect_derailment(goals: List[Goal], assistant_response: str) -> Optional[Dict]:
