@@ -75,7 +75,14 @@ Key architectural facts:
 | REST API | `backend/api_endpoints.py` | All REST routes, in-memory conversations store, keyphrase/goal-progress/sentence-similarity endpoints |
 | WebSocket | `backend/websocket_handlers.py` | WS message dispatch, pipeline orchestration, keyphrase + detection after response |
 | Connections | `backend/connection_manager.py` | WS connection lifecycle (connect/disconnect/send) |
-| Goal pipeline | `backend/goal_pipeline.py` | `infer_goals()`, `merge_goals()`, `evaluate_goal()`, `extract_keyphrases()`, `stream_llm_response()`, `detect_forgetting()`, `detect_contradiction()`, `detect_derailment()`, `detect_repetition()`, `detect_fixation()`, `detect_breakdown()`, `compute_goal_progress()` |
+| Goal pipeline (compat) | `backend/goal_pipeline.py` | Compatibility re-exports; new code should import from `backend/pipelines/` |
+| Inference | `backend/pipelines/goal_inference.py` | `infer_goals()` — extract goals from messages (Appendix A.1) |
+| Merge | `backend/pipelines/goal_merge.py` | `merge_goals()`, `replace_outdated_goals()` — combine/refine goals (Appendix A.2) |
+| Evaluation | `backend/pipelines/goal_evaluation.py` | `evaluate_goal()` — assess goal handling in responses (Appendix A.3) |
+| LLM streaming | `backend/pipelines/llm_streaming.py` | `stream_llm_response()` — stream responses with mid-stream disconnect handling |
+| Keyphrases | `backend/pipelines/keyphrase_extraction.py` | `extract_keyphrases()` — salient phrase extraction (Appendix A.4) |
+| Detection | `backend/pipelines/goal_detection.py` | `detect_forgetting()`, `detect_contradiction()`, `detect_derailment()`, `detect_repetition()`, `detect_fixation()`, `detect_breakdown()` |
+| Progress | `backend/pipelines/goal_progress.py` | `compute_goal_progress()` — cross-message tracking + completion classification |
 | LLM service | `backend/llm_service.py` | Static-method façade delegating to active provider |
 | LLM providers | `backend/llm_provider.py` | Abstract `LLMProvider` + Ollama/OpenRouter/Anthropic implementations, retry logic, cloud detection |
 | Frontend HTML | `frontend/index.html` | SPA shell, Tailwind CSS, goal detail panel, Events tab with keyphrases + sentence modes |
@@ -131,7 +138,7 @@ Fastest places to start reading when diagnosing runtime behavior:
 
 - App bootstrap + WebSocket routes: `backend/main.py`
 - All REST endpoints + conversations store: `backend/api_endpoints.py`
-- Goal pipeline (infer/merge/evaluate/stream/detect/progress): `backend/goal_pipeline.py`
+- Goal pipeline stages (infer/merge/evaluate/stream/detect/progress): `backend/pipelines/`
 - LLM provider factory + implementations: `backend/llm_provider.py`
 - LLM service façade: `backend/llm_service.py`
 - Data models: `backend/models.py`

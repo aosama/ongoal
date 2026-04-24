@@ -1,8 +1,4 @@
-"""
-Goal Detection Stage — Detect conversational anomalies and goal behavior patterns.
-
-Implements forgetting, contradiction, derailment, repetition, fixation, and breakdown detection.
-"""
+"""Goal Detection — Detect conversational anomalies and goal behavior patterns."""
 
 import json
 import logging
@@ -13,7 +9,6 @@ from backend.models import Goal
 from backend.llm_service import LLMService
 
 logger = logging.getLogger(__name__)
-
 
 async def detect_forgetting(goals: List[Goal], assistant_response: str) -> List[Dict]:
     """Detect goals that may have been forgotten in the conversation (REQ-03-01-006).
