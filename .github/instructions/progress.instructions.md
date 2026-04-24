@@ -64,6 +64,7 @@ applyTo: "**"
 - [x] Regression re-fixed: merged goals `source_message_id` now enforced on empty-operations LLM path (not just except path)
 - [x] 114/114 backend tests passing (20 tests added since last count)
 - [x] Demo scenario validated end-to-end: Content Creation with Revisions (Turn 1–2, goal inference, contradiction detection, evaluation panel, Events tab, individual goal view)
+- [x] Regression: `replace_outdated_goals` not imported in `websocket_handlers.py` — caused second-turn pipeline crash (NameError → ws:close without response → UI freeze)
 
 ## Remaining
 

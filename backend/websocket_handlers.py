@@ -11,6 +11,7 @@ from backend.goal_pipeline import (
     infer_goals, merge_goals, evaluate_goal, stream_llm_response,
     extract_keyphrases, detect_forgetting, detect_contradiction, detect_derailment,
     detect_repetition, detect_fixation, compute_goal_progress, detect_breakdown,
+    replace_outdated_goals,
 )
 from backend.api_endpoints import get_conversations_store
 
