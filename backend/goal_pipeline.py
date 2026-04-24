@@ -8,6 +8,10 @@ Implements the 4 LLM-powered pipeline stages defined in:
   - A.4: Keyphrase Extraction (extract_keyphrases)
 """
 
+# Compatibility re-exports (new code should import from backend.pipelines directly)
+from backend.pipelines.goal_inference import infer_goals
+from backend.pipelines.goal_evaluation import evaluate_goal
+
 import json
 import logging
 import re
@@ -24,71 +28,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
-async def infer_goals(message: str, message_id: str, existing_goals_count: int = 0) -> List[Goal]:
-    """Extract goals from user message using exact prompt from OnGoal requirements (Appendix A.1)"""
-    
-    # Input validation: reject empty/whitespace-only messages
-    if not message or not message.strip():
-        raise ValueError("Message cannot be empty")
-    
-    # Input validation: enforce maximum message length (safety guard)
-    MAX_MESSAGE_LENGTH = 4000
-    if len(message) > MAX_MESSAGE_LENGTH:
-        raise ValueError(f"Message too long (max {MAX_MESSAGE_LENGTH} chars)")
-    
-    # EXACT PROMPT from OnGoal Requirements Appendix A.1
-    inference_prompt = f"""You will be presented with human dialogue in a conversation with you, an assistant. Your task is to extract every clause verbatim from the document exactly as it appears.
-
-List all clauses in the dialogue that are either a question, request, offer, or suggestion. Briefly summarize how to address the goal of the clause in ONE sentence.
-
-Please respond ONLY with a valid JSON in the following format:
-
-{{
-  "clauses": [
-    {{"clause": "<CLAUSE_1>", "type": "<TYPE_1>", "summary": "<SUMMARY_1>"}},
-    {{"clause": "<CLAUSE_2>", "type": "<TYPE_2>", "summary": "<SUMMARY_2>"}}
-  ]
-}}
-
-Human dialogue: {message}"""
-
-    for attempt in range(2):
-        try:
-            response_text = await LLMService.generate_response(inference_prompt, max_tokens=1000)
-
-            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-            if json_match:
-                response_data = json.loads(json_match.group())
-                clauses_data = response_data.get("clauses", [])
-            else:
-                clauses_data = []
-            
-            goals = []
-            total_prior = existing_goals_count
-            for clause_data in clauses_data:
-                goal = Goal(
-                    id=f"G{total_prior}",
-                    text=clause_data["clause"],
-                    type=clause_data["type"],
-                    summary=clause_data.get("summary", ""),
-                    source_message_id=message_id,
-                    created_at=datetime.now().isoformat()
-                )
-                total_prior += 1
-                goals.append(goal)
-            
-            return goals
-        
-        except (json.JSONDecodeError, KeyError, TypeError) as e:
-            logger.warning("Goal inference parse error (attempt %d): %s", attempt + 1, e)
-            if attempt == 0:
-                continue
-            return []
-        except Exception as e:
-            logger.warning("Goal inference failed: %s", e)
-            return []
-    
-    return []
+# infer_goals was extracted to backend/pipelines/goal_inference.py
 
 
 async def replace_outdated_goals(existing_goals: List[Goal], new_goals: List[Goal], current_message_id: str, conversation) -> List[Goal]:
@@ -262,57 +202,7 @@ Please respond ONLY with a valid JSON in the following format:
         return locked_goals + mergeable_old + new_goals
 
 
-async def evaluate_goal(goal: Goal, assistant_response: str) -> Dict:
-    """Evaluate how assistant response addresses a goal using prompt from OnGoal requirements (Appendix A.3)"""
-
-    from backend.models import GoalEvaluation
-
-    evaluation_prompt = f"""You will be presented with human dialogue and a response from you, an assistant. Your task is to evaluate the assistant response in terms of the following conversational goal: {goal.text}
-
-Categorize how the assistant response addresses the goal in one of three categories. The categories are confirm, contradict, or ignore. Explain the relationship between the response and the goal in ONE sentence. Extract clauses verbatim from the response exactly as they appear as examples that show evidence to support your explanation.
-
-Please respond ONLY with a valid JSON in the following format:
-
-{{
-  "category": "<CATEGORY>",
-  "explanation": "<EXPLANATION>",
-  "examples": ["<EXAMPLE_1>", "<EXAMPLE_2>"]
-}}
-
-Assistant response: {assistant_response}"""
-
-    try:
-        response_text = await LLMService.generate_response(evaluation_prompt, max_tokens=1000)
-
-        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-        if json_match:
-            evaluation_data = json.loads(json_match.group())
-            evaluation = GoalEvaluation(
-                goal_id=goal.id,
-                category=evaluation_data.get("category", "ignore"),
-                explanation=evaluation_data.get("explanation", ""),
-                examples=evaluation_data.get("examples", []),
-            )
-            goal.evaluation = evaluation
-            goal.status = evaluation.category
-            return evaluation.model_dump()
-
-        else:
-            fallback = GoalEvaluation(
-                goal_id=goal.id, category="ignore",
-                explanation="Unable to evaluate goal",
-            )
-            goal.evaluation = fallback
-            goal.status = "ignore"
-            return fallback.model_dump()
-
-    except Exception as e:
-        logger.warning("Goal evaluation failed for %s: %s", goal.id, e)
-        error_eval = GoalEvaluation(goal_id=goal.id, category="ignore",
-                                     explanation="Unable to evaluate goal due to service error")
-        goal.evaluation = error_eval
-        goal.status = "ignore"
-        return error_eval.model_dump()
+# evaluate_goal was extracted to backend/pipelines/goal_evaluation.py
 
 
 async def stream_llm_response(message: str, connection_manager, websocket, message_id: str, conversation_messages: List):
