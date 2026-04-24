@@ -337,7 +337,7 @@ async def extract_keyphrases(conversation_id: str):
 
     last_assistant = assistant_messages[-1]
 
-    from backend.goal_pipeline import extract_keyphrases as _extract_keyphrases
+    from backend.pipelines import extract_keyphrases as _extract_keyphrases
     keyphrases = await _extract_keyphrases(last_assistant.content)
 
     return {
@@ -419,7 +419,7 @@ async def get_goal_progress(conversation_id: str):
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     conversation = conversations[conversation_id]
-    from backend.goal_pipeline import compute_goal_progress
+    from backend.pipelines import compute_goal_progress
     progress = compute_goal_progress(conversation)
 
     return {

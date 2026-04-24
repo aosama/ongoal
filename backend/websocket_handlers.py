@@ -7,7 +7,7 @@ from datetime import datetime
 from fastapi import WebSocket, WebSocketDisconnect
 
 from backend.models import Message, Conversation, GoalAlert
-from backend.goal_pipeline import (
+from backend.pipelines import (
     infer_goals, merge_goals, evaluate_goal, stream_llm_response,
     extract_keyphrases, detect_forgetting, detect_contradiction, detect_derailment,
     detect_repetition, detect_fixation, compute_goal_progress, detect_breakdown,
