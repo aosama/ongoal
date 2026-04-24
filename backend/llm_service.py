@@ -57,7 +57,13 @@ class LLMService:
     @staticmethod
     def is_available() -> bool:
         """Check if LLM service is available"""
-        return LLMService._get_provider().is_available()
+        provider = LLMService._get_provider()
+        return provider.is_available()
+
+    @staticmethod
+    def get_status() -> Dict[str, object]:
+        """Return LLM provider status information"""
+        return LLMService._get_provider().get_status()
 
     @staticmethod
     def get_service_status() -> Dict[str, Any]:

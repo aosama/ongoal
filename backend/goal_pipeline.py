@@ -27,6 +27,15 @@ logger = logging.getLogger(__name__)
 async def infer_goals(message: str, message_id: str, existing_goals_count: int = 0) -> List[Goal]:
     """Extract goals from user message using exact prompt from OnGoal requirements (Appendix A.1)"""
     
+    # Input validation: reject empty/whitespace-only messages
+    if not message or not message.strip():
+        raise ValueError("Message cannot be empty")
+    
+    # Input validation: enforce maximum message length (safety guard)
+    MAX_MESSAGE_LENGTH = 4000
+    if len(message) > MAX_MESSAGE_LENGTH:
+        raise ValueError(f"Message too long (max {MAX_MESSAGE_LENGTH} chars)")
+    
     # EXACT PROMPT from OnGoal Requirements Appendix A.1
     inference_prompt = f"""You will be presented with human dialogue in a conversation with you, an assistant. Your task is to extract every clause verbatim from the document exactly as it appears.
 
@@ -187,6 +196,12 @@ Please respond ONLY with a valid JSON in the following format:
         
     except Exception as e:
         logger.warning("Goal merge failed: %s", e)
+        # Fallback: on LLM failure, still override source_message_id for new goals when current_message_id is provided
+        if current_message_id:
+            for g in mergeable_old:
+                g.source_message_id = current_message_id
+            for g in new_goals:
+                g.source_message_id = current_message_id
         return locked_goals + mergeable_old + new_goals
 
 

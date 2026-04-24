@@ -213,7 +213,7 @@ createApp({
                 if (!res.ok) throw new Error(`API ${res.status}: ${path}`);
                 return await res.json();
             } catch (err) {
-                console.error('API call failed:', path, err);
+                pushToast({ severity: 'error', alert_type: 'api_error', message: `API call failed: ${path} — ${err.message || err}` });
                 return null;
             }
         };
@@ -286,6 +286,11 @@ createApp({
         // --- WebSocket ---
         const connectWebSocket = () => {
             try {
+                // Clean up any existing WebSocket before creating a new one
+                if (ws.value) {
+                    ws.value.close();
+                }
+
                 ws.value = new WebSocket(WS_URL);
 
                 ws.value.onopen = () => {
@@ -300,11 +305,11 @@ createApp({
                     setTimeout(connectWebSocket, 3000);
                 };
 
-                ws.value.onerror = () => {
-                    // onclose will handle reconnection
+                ws.value.onerror = (err) => {
+                    pushToast({ severity: 'error', alert_type: 'websocket_error', message: 'WebSocket connection error — check server status' });
                 };
             } catch (err) {
-                console.error('WebSocket connect failed:', err);
+                pushToast({ severity: 'error', alert_type: 'websocket_error', message: `WebSocket connection failed — ${err.message || err}` });
                 setTimeout(connectWebSocket, 3000);
             }
         };
@@ -457,7 +462,7 @@ createApp({
                     break;
 
                 case 'error':
-                    console.error('Server error:', data.message);
+                    pushToast({ severity: 'error', alert_type: 'server_error', message: data.message || 'An unknown server error occurred.' });
                     isStreaming.value = false;
                     break;
             }

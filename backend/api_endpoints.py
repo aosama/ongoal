@@ -462,6 +462,7 @@ async def restore_goal_from_history(conversation_id: str, entry_index: int):
         text=entry.goal_text,
         type=entry.goal_type,
         source_message_id="restored",
+        created_at=entry.timestamp,
         locked=False,
     )
 
@@ -469,6 +470,7 @@ async def restore_goal_from_history(conversation_id: str, entry_index: int):
     if existing:
         existing.text = entry.goal_text
         existing.type = entry.goal_type
+        existing.created_at = entry.timestamp
     else:
         conversation.goals.append(restored_goal)
 

@@ -53,9 +53,13 @@ applyTo: "**"
 - [x] Open source polish: verbose comments cleaned, CORS configurable via env, no debug prints, no TODOs
 - [x] Regression: fixed merged goals inheriting wrong source_message_id (goals shown under wrong user message)
 - [x] Regression: fixed eval example highlighting breaking markdown heading syntax (orphaned ###)
-- [x] 94/94 backend tests passing (3 new regression tests)
+- [x] 94/94 backend tests passing
+- [x] console.error replaced with user-visible toast notifications in frontend
+- [x] README updated — Anthropic badge removed, free Ollama Cloud as default, phase statuses accurately reflect completed work
+- [x] 94/94 backend tests passing (stable baseline confirmed)
+- [x] Browser tests require Playwright install (needs `playwright install`)
 
 ## Remaining
 
 - [ ] Persist conversation state (DB or file, not just in-memory) — user prefers in-memory only
-- [ ] Open source polish (no debug prints, clean docs, CI) — mostly done; CI not configured
+- [ ] Browser tests need `playwright install` to run (pre-installed on CI runners)

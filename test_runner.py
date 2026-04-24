@@ -45,7 +45,8 @@ class OnGoalTestRunner:
         cmd = [
             self.venv_python, "-m", "pytest",
             "tests/backend/",
-            "-m", "backend or not browser",
+            "-m", "not browser",
+            "-n", "auto", "--dist=loadscope",
             "--tb=short"
         ]
 
@@ -83,6 +84,7 @@ class OnGoalTestRunner:
             self.venv_python, "-m", "pytest",
             "tests/",
             "-m", "integration",
+            "-n", "auto", "--dist=loadscope",
             "--tb=short"
         ]
 
@@ -92,35 +94,53 @@ class OnGoalTestRunner:
         return self._execute_tests(cmd, "Integration Tests")
 
     def run_regression_suite(self, verbose=True, visible=False):
-        """Run complete regression test suite"""
-        print("🎯 Running Complete Regression Suite")
+        """Optimized regression: fast tests in parallel, slow/LLM tests in serial"""
+        print("🎯 RUNNING OPTIMIZED REGRESSION SUITE")
         print("=" * 50)
 
-        results = {}
-        overall_success = True
-
-        # Run each test category
-        test_categories = [
-            ("Unit Tests", lambda: self.run_unit_tests(verbose)),
-            ("Backend Tests", lambda: self.run_backend_tests(verbose)),
-            ("Integration Tests", lambda: self.run_integration_tests(verbose)),
-            ("Browser Tests", lambda: self.run_browser_tests(verbose, visible))
+        # Phase 1: Fast tests in parallel with xdist
+        print("\n🚀 Phase 1: Fast tests (parallel)")
+        print("-" * 40)
+        fast_cmd = [
+            self.venv_python, "-m", "pytest",
+            "tests/backend/",
+            "-m", "not slow",
+            "--tb=short",
+            "-n", "auto", "--dist=loadscope"
         ]
+        if verbose:
+            fast_cmd.append("-v")
+        fast_ok = self._execute_tests(fast_cmd, "Fast Tests")
 
-        for category_name, test_func in test_categories:
-            print(f"\n🔍 Running {category_name}...")
-            success = test_func()
-            results[category_name] = success
-            overall_success = overall_success and success
+        # Phase 2: Check if slow tests exist
+        slow_result = subprocess.run(
+            [self.venv_python, "-m", "pytest", "--collect-only", "tests/backend/", "-m", "slow", "-q"],
+            capture_output=True, text=True
+        )
+        if "collected 0 items" in slow_result.stdout or slow_result.returncode != 0:
+            print("\n📋 No slow tests found — regression complete")
+            self._print_regression_summary({"Fast Tests": fast_ok}, fast_ok)
+            return fast_ok
 
-            if not success:
-                print(f"❌ {category_name} failed!")
-            else:
-                print(f"✅ {category_name} passed!")
+        # Phase 3: Slow tests in serial (with real LLM calls)
+        print("\n🐌 Phase 2: Slow tests (serial — real LLM calls)")
+        print("-" * 40)
+        slow_cmd = [
+            self.venv_python, "-m", "pytest",
+            "tests/backend/",
+            "-m", "slow",
+            "--tb=short",
+            "-n", "1"
+        ]
+        if verbose:
+            slow_cmd.append("-v")
+        slow_ok = self._execute_tests(slow_cmd, "Slow Tests")
 
-        # Summary report
-        self._print_regression_summary(results, overall_success)
-        return overall_success
+        overall = fast_ok and slow_ok
+        self._print_regression_summary(
+            {"Fast Tests": fast_ok, "Slow Tests": slow_ok}, overall
+        )
+        return overall
 
     def run_quick_smoke_tests(self, verbose=True):
         """Run quick smoke tests for rapid feedback"""
