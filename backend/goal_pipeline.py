@@ -91,7 +91,59 @@ Human dialogue: {message}"""
     return []
 
 
-async def merge_goals(old_goals: List[Goal], new_goals: List[Goal], current_message_id: str = "") -> List[Goal]:
+async def replace_outdated_goals(existing_goals: List[Goal], new_goals: List[Goal], current_message_id: str, conversation) -> List[Goal]:
+    """Detect and mark outdated goals that are contradicted by new goals.
+
+    Uses existing detect_contradiction() to find pairs, then marks the older
+    goal as replaced. Adds a GoalHistoryEntry tracking the replacement.
+    Returns the filtered existing_goals with replaced goals removed.
+    """
+    from backend.models import GoalHistoryEntry
+
+    combined = existing_goals + new_goals
+    contradictions = await detect_contradiction(combined)
+    if not contradictions:
+        return existing_goals
+
+    replaced_ids = set()
+    for c in contradictions:
+        gid1 = c.get("goal_id_1")
+        gid2 = c.get("goal_id_2")
+        reason = c.get("reason", "Contradicts newer goal")
+
+        # Determine which goal is older (from existing_goals vs new_goals)
+        goal1 = next((g for g in combined if g.id == gid1), None)
+        goal2 = next((g for g in combined if g.id == gid2), None)
+        if not goal1 or not goal2:
+            continue
+
+        # Mark the one from existing_goals as replaced
+        old_goal = goal1 if goal1 in existing_goals and goal2 in new_goals else (
+            goal2 if goal2 in existing_goals and goal1 in new_goals else None
+        )
+        new_goal = goal2 if old_goal is goal1 else (goal1 if old_goal is goal2 else None)
+        if not old_goal or not new_goal:
+            continue
+
+        old_goal.status = "replaced"
+        replaced_ids.add(old_goal.id)
+
+        # Track in conversation history
+        entry = GoalHistoryEntry(
+            turn=len([m for m in conversation.messages if m.role == "user"]),
+            operation="replace",
+            goal_id=old_goal.id,
+            goal_text=old_goal.text,
+            goal_type=old_goal.type,
+            previous_goal_ids=[new_goal.id],
+            previous_goal_texts=[new_goal.text],
+        )
+        conversation.goal_history.append(entry)
+
+    return [g for g in existing_goals if g.id not in replaced_ids]
+
+
+async def merge_goals(old_goals: List[Goal], new_goals: List[Goal], current_message_id: str = "", conversation=None) -> List[Goal]:
     """Merge old and new goals, respecting locked goals"""
     
     if not new_goals:

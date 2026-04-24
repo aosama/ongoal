@@ -29,6 +29,10 @@ class ConnectionManager:
             if websocket in self.active_connections:
                 self.active_connections.remove(websocket)
 
+    def get_connections(self) -> List[WebSocket]:
+        """Return a copy of active connections for inspection."""
+        return self.active_connections.copy()
+
     async def broadcast(self, message: dict):
         for connection in self.active_connections:
             await connection.send_text(json.dumps(message))

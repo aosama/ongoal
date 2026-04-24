@@ -478,3 +478,68 @@ async def restore_goal_from_history(conversation_id: str, entry_index: int):
         "goal": restored_goal.model_dump(),
         "message": f"Restored goal {entry.goal_id} from turn {entry.turn}"
     }
+
+
+# Request/Response models for manual goal replacement
+class GoalReplaceRequest(BaseModel):
+    new_text: str
+    new_type: str = "request"
+
+
+class GoalReplaceResponse(BaseModel):
+    status: str
+    old_goal: dict
+    new_goal: dict
+    message: str
+    timestamp: str
+
+
+@router.post("/api/conversations/{conversation_id}/goals/{goal_id}/replace")
+async def replace_goal(conversation_id: str, goal_id: str, req: GoalReplaceRequest):
+    """Manually replace an existing goal with a new version.
+
+    Marks the old goal as replaced, creates a new goal, and records
+    the operation in goal_history.
+    """
+    if conversation_id not in conversations:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    conversation = conversations[conversation_id]
+    goal = next((g for g in conversation.goals if g.id == goal_id), None)
+    if not goal:
+        raise HTTPException(status_code=404, detail="Goal not found")
+
+    # Mark oldgoal as replaced (in-place so other refs see the update)
+    goal.status = "replaced"
+
+    # Create replacement goal
+    new_goal_id = f"{goal_id}R{len(conversation.goals)}"
+    new_goal = Goal(
+        id=new_goal_id,
+        text=req.new_text,
+        type=req.new_type,
+        source_message_id="manual_replace",
+        created_at=datetime.now().isoformat(),
+    )
+    conversation.goals.append(new_goal)
+
+    # History tracking
+    from backend.models import GoalHistoryEntry
+    turn = len([m for m in conversation.messages if m.role == "user"])
+    conversation.goal_history.append(GoalHistoryEntry(
+        turn=turn,
+        operation="replace",
+        goal_id=goal.id,
+        goal_text=goal.text,
+        goal_type=goal.type,
+        previous_goal_ids=[new_goal.id],
+        previous_goal_texts=[new_goal.text],
+    ))
+
+    return {
+        "status": "success",
+        "old_goal": goal.model_dump(),
+        "new_goal": new_goal.model_dump(),
+        "message": f"Replaced goal {goal_id} with {new_goal_id}",
+        "timestamp": datetime.now().isoformat()
+    }

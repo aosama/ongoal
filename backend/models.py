@@ -48,7 +48,7 @@ class Goal(BaseModel):
     text: str
     type: str  # question, request, offer, suggestion
     summary: str = ""  # One-sentence summary of how to address this goal (REQ-09-01-003)
-    status: Optional[str] = None  # confirmed, contradicted, ignored
+    status: Optional[str] = None  # confirmed, contradicted, ignored, replaced
     locked: bool = False
     completed: bool = False
     source_message_id: str

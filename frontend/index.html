@@ -255,10 +255,23 @@
                 class="alert-toast rounded-lg shadow-lg p-3 flex items-start space-x-2"
                 :class="toast.severity === 'critical' ? 'bg-red-600 text-white' : 'bg-amber-500 text-white'"
             >
-                <span class="text-lg flex-shrink-0">{{ toast.severity === 'critical' ? '🚨' : '⚠️' }}</span>
+                <span class="text-lg flex-shrink-0">{{
+                    toast.severity === 'critical' ? '🚨' :
+                    toast.severity === 'error' ? '❌' :
+                    toast.severity === 'success' ? '✅' :
+                    toast.severity === 'info' ? 'ℹ️' : '⚠️'
+                }}</span>
                 <div class="flex-1 min-w-0">
                     <div class="font-medium text-sm">{{ toast.title }}</div>
                     <div class="text-xs opacity-90 mt-0.5">{{ toast.message }}</div>
+                    <div v-if="toast.actions && toast.actions.length" class="flex space-x-2 mt-2">
+                        <button
+                            v-for="action in toast.actions"
+                            :key="action.label"
+                            @click="action.handler(); dismissToast(idx)"
+                            class="px-2 py-1 text-xs rounded bg-white bg-opacity-20 hover:bg-opacity-30 transition"
+                        >{{ action.label }}</button>
+                    </div>
                 </div>
                 <button @click="dismissToast(idx)" class="flex-shrink-0 opacity-70 hover:opacity-100 text-lg leading-none">&times;</button>
             </div>
@@ -659,10 +672,17 @@
                                             <span v-if="goalMessageCount(goal.id) > 0" class="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">
                                                 📨 {{ goalMessageCount(goal.id) }}
                                             </span>
+                                            <span v-if="goal.status === 'replaced'" class="text-xs bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded">↩️ replaced</span>
                                         </div>
                                         <!-- Summary (if available) -->
                                         <p v-if="goal.summary" class="text-xs text-gray-500 italic mb-1">{{ goal.summary }}</p>
-                                        <p class="text-sm text-gray-900 break-words">{{ goal.text }}</p>
+                                        <p class="text-sm text-gray-900 break-words" :class="{'line-through opacity-50': goal.status === 'replaced'}">{{ goal.text }}</p>
+                                        <!-- Replace button -->
+                                        <button
+                                            v-if="goal.status !== 'replaced'"
+                                            @click.stop="replaceGoal(goal.id)"
+                                            class="mt-1 text-xs text-gray-400 hover:text-indigo-600"
+                                        >↩️ Replace</button>
                                         <!-- Goal Progress Bar (REQ-03-02-001, REQ-03-02-004) -->
                                         <div v-if="goalProgressMap[goal.id]" class="mt-2">
                                             <div class="flex items-center justify-between mb-1">

@@ -247,12 +247,13 @@ createApp({
                 severity: alert.severity,
                 title: alert.alert_type.charAt(0).toUpperCase() + alert.alert_type.slice(1),
                 message: alert.message || 'Alert detected',
+                actions: alert.actions || [],
             };
             toasts.value.push(toast);
             setTimeout(() => {
                 const idx = toasts.value.findIndex(t => t.id === toast.id);
                 if (idx !== -1) toasts.value.splice(idx, 1);
-            }, 6000);
+            }, 15000); /* longer timeout for restore prompt actions */
         };
 
         const alertIcon = (type) => {
@@ -522,6 +523,25 @@ createApp({
             }
         };
 
+        const replaceGoal = async (goalId) => {
+            const newText = prompt('Replace goal with:');
+            if (!newText || !newText.trim()) return;
+            const res = await apiCall(
+                `/api/conversations/${CONVERSATION_ID}/goals/${goalId}/replace`,
+                {
+                    method: 'POST',
+                    body: JSON.stringify({ new_text: newText.trim(), new_type: 'request' }),
+                }
+            );
+            if (res?.new_goal) {
+                const idx = goals.value.findIndex(g => g.id === goalId);
+                if (idx !== -1) {
+                    goals.value[idx].status = 'replaced';
+                    goals.value.push(res.new_goal);
+                }
+            }
+        };
+
         // --- Timeline ---
         const updateTimelineInference = (inferredGoals) => {
             const turnNum = Math.ceil(messages.value.filter(m => m.role === 'user').length);
@@ -764,12 +784,71 @@ createApp({
             });
         };
 
+        // --- Persistence ---
+        const STORAGE_KEY = 'ongoal_conversation_default';
+        const STORAGE_VERSION = 1;
+
+        const saveConversation = () => {
+            try {
+                const payload = {
+                    version: STORAGE_VERSION,
+                    messages: messages.value,
+                    goals: goals.value,
+                    alerts: alerts.value,
+                    pipelineSettings: { infer: pipelineSettings.infer, merge: pipelineSettings.merge, evaluate: pipelineSettings.evaluate },
+                    timestamp: new Date().toISOString(),
+                };
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+            } catch (e) {
+                // Quota exceeded or storage unavailable — silently skip
+            }
+        };
+
+        const loadConversation = () => {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                if (!raw) return false;
+                const data = JSON.parse(raw);
+                if (data.version !== STORAGE_VERSION) return false;
+
+                messages.value = data.messages || [];
+                goals.value = data.goals || [];
+                alerts.value = data.alerts || [];
+                if (data.pipelineSettings) {
+                    pipelineSettings.infer = data.pipelineSettings.infer;
+                    pipelineSettings.merge = data.pipelineSettings.merge;
+                    pipelineSettings.evaluate = data.pipelineSettings.evaluate;
+                }
+                return true;
+            } catch (e) {
+                return false;
+            }
+        };
+
+        const clearSavedConversation = () => {
+            localStorage.removeItem(STORAGE_KEY);
+        };
+
+        const restorePreviousSession = () => {
+            const ok = loadConversation();
+            if (ok) {
+                pushToast({ severity: 'info', alert_type: 'session_restored', message: 'Previous session restored.' });
+            }
+        };
+
+        const startFreshSession = () => {
+            clearSavedConversation();
+            messages.value = [];
+            goals.value = [];
+            alerts.value = [];
+            pushToast({ severity: 'info', alert_type: 'session_fresh', message: 'Started fresh session.' });
+        };
+
         // --- D3 Timeline Rendering ---
         const renderTimeline = () => {
             nextTick(() => {
                 const container = document.querySelector('#d3-timeline');
                 if (!container || timelineData.value.length === 0) return;
-
                 container.innerHTML = '';
                 const containerWidth = container.clientWidth || 280;
                 const rowHeight = 50;
@@ -777,59 +856,45 @@ createApp({
                 const headerHeight = 24;
                 const nodeWidth = 60;
                 const nodeHeight = 28;
-                const nodePadding = 8;
-
                 const turns = timelineData.value;
                 const totalHeight = turns.length * (3 * rowHeight + turnGap) + 40;
-                
                 const svg = d3.select(container)
                     .append('svg')
                     .attr('width', containerWidth)
                     .attr('height', totalHeight);
-
                 let yOffset = 0;
-
                 turns.forEach((turn, turnIdx) => {
                     const turnGroup = svg.append('g')
                         .attr('class', 'timeline-turn-group')
                         .attr('transform', `translate(0, ${yOffset})`);
-
                     turnGroup.append('text')
                         .attr('x', 4)
                         .attr('y', 14)
                         .attr('class', 'text-xs font-bold fill-gray-700')
                         .text(`Turn ${turn.turnNumber}`);
-
                     const inferY = headerHeight;
                     const mergeY = inferY + rowHeight;
                     const evalY = mergeY + rowHeight;
-
                     turnGroup.append('text')
                         .attr('x', 4).attr('y', inferY + 14)
                         .attr('class', 'text-xs fill-blue-500')
                         .text('Infer');
-
                     turnGroup.append('text')
                         .attr('x', 4).attr('y', mergeY + 14)
                         .attr('class', 'text-xs fill-green-600')
                         .text('Merge');
-
                     turnGroup.append('text')
                         .attr('x', 4).attr('y', evalY + 14)
                         .attr('class', 'text-xs fill-purple-600')
                         .text('Evaluate');
-
                     const colStart = 60;
                     const colWidth = containerWidth - colStart - 8;
-
                     const inferGoals = turn.inferredGoals || [];
                     const finalGoals = turn.finalGoals || [];
                     const evaluations = turn.evaluations || [];
-
                     const inferSpacing = inferGoals.length > 1 ? colWidth / inferGoals.length : 0;
                     const mergeSpacing = finalGoals.length > 1 ? colWidth / finalGoals.length : 0;
                     const evalSpacing = evaluations.length > 1 ? colWidth / evaluations.length : 0;
-
                     const inferPositions = [];
                     inferGoals.forEach((goal, i) => {
                         const x = colStart + (inferSpacing > 0 ? inferSpacing * i + inferSpacing / 2 : colWidth / 2);
@@ -847,7 +912,6 @@ createApp({
                             .attr('class', 'text-xs fill-blue-800')
                             .text(truncateText(goal.id + ': ' + goal.text, 12));
                     });
-
                     const mergePositions = [];
                     finalGoals.forEach((goal, i) => {
                         const x = colStart + (mergeSpacing > 0 ? mergeSpacing * i + mergeSpacing / 2 : colWidth / 2);
@@ -867,7 +931,6 @@ createApp({
                             .attr('class', 'text-xs fill-gray-800')
                             .text(truncateText(goal.id, 12));
                     });
-
                     const evalPositions = [];
                     evaluations.forEach((ev, i) => {
                         const x = colStart + (evalSpacing > 0 ? evalSpacing * i + evalSpacing / 2 : colWidth / 2);
@@ -889,7 +952,6 @@ createApp({
                             .attr('fill', evStroke)
                             .text(`${icon} ${ev.goalId}`);
                     });
-
                     inferPositions.forEach(inf => {
                         const bestMerge = mergePositions.length === 1 ? mergePositions[0] :
                             mergePositions.find(m => m.goal.id === inf.goal.id) || mergePositions[0];
@@ -902,7 +964,6 @@ createApp({
                                 .attr('stroke-dasharray', '4,2');
                         }
                     });
-
                     mergePositions.forEach(mrg => {
                         const bestEval = evalPositions.length === 1 ? evalPositions[0] :
                             evalPositions.find(e => e.ev.goalId === mrg.goal.id) || evalPositions[0];
@@ -915,16 +976,34 @@ createApp({
                                 .attr('stroke-width', 1.5);
                         }
                     });
-
                     yOffset += 3 * rowHeight + turnGap;
                 });
             });
         };
 
+        // Auto-save whenever messages change
+        watch(messages, saveConversation, { deep: true });
+        watch(goals, saveConversation, { deep: true });
+        watch(alerts, saveConversation, { deep: true });
+
         // --- Lifecycle ---
         onMounted(() => {
             connectWebSocket();
             fetchLlmStatus();
+
+            // Prompt for session restoration if localStorage has data
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if (raw && messages.value.length === 0) {
+                pushToast({
+                    severity: 'info',
+                    alert_type: 'restore_prompt',
+                    message: 'Restore previous session?',
+                    actions: [
+                        { label: 'Restore', handler: restorePreviousSession },
+                        { label: 'Start Fresh', handler: startFreshSession },
+                    ],
+                });
+            }
         });
 
         watch(activeTab, (tab) => {
@@ -952,7 +1031,7 @@ createApp({
             goalMessageCount,
             messageGoalMap, expandedGlyphId, highlightModes,
             goalTypeConfig, evalStyleFor, goalsForMessage, glyphColor, toggleGlyph,
-            sendMessage, togglePipeline, toggleGoalLock, toggleGoalComplete,
+            sendMessage, togglePipeline, toggleGoalLock, toggleGoalComplete, replaceGoal,
             selectGoal, dismissAlert, dismissAllAlerts, dismissToast, pushToast,
             alertIcon, alertSeverityClass, fetchKeyphrases,
             fetchGoalHistory, restoreGoal, fetchGoalProgress,
@@ -961,7 +1040,7 @@ createApp({
             getGoalNodeClass, getConnectionClass, getEvaluationClass, getEvaluationIcon,
             navigateToMessage, scrollTimeline,
             exitIndividualView, scrollToEvalMessage,
-            renderTimeline,
+            renderTimeline, clearSavedConversation, saveConversation, loadConversation,
         };
     }
 }).mount('#app');

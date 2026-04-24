@@ -80,6 +80,9 @@ async def handle_user_message(message_data, conversation_id, conversations, webs
     # Stage 2: Goal Merging
     final_goals = inferred_goals
     if conversation.pipeline_settings.merge and conversation.goals and inferred_goals:
+        # Mark outdated goals as replaced before merging
+        conversation.goals = await replace_outdated_goals(conversation.goals, inferred_goals, message_id, conversation)
+
         old_goals_snapshot = {g.id: g.model_copy() for g in conversation.goals}
         merged_goals = await merge_goals(conversation.goals, inferred_goals, message_id)
 
