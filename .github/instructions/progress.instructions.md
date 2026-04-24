@@ -58,8 +58,15 @@ applyTo: "**"
 - [x] README updated — Anthropic badge removed, free Ollama Cloud as default, phase statuses accurately reflect completed work
 - [x] 94/94 backend tests passing (stable baseline confirmed)
 - [x] Browser tests require Playwright install (needs `playwright install`)
+- [x] LLM provider default changed to `ollama_cloud` (paid REST API) — no silent fallback to local Ollama daemon
+- [x] WebSocket disconnect freeze bug fixed: `isStreaming` reset on `onclose`, stale handler cleanup, backend `send_message` returns status
+- [x] Backend stream token-waste prevention: abort LLM streaming when client disconnects mid-stream
+- [x] Regression re-fixed: merged goals `source_message_id` now enforced on empty-operations LLM path (not just except path)
+- [x] 114/114 backend tests passing (20 tests added since last count)
+- [x] Demo scenario validated end-to-end: Content Creation with Revisions (Turn 1–2, goal inference, contradiction detection, evaluation panel, Events tab, individual goal view)
 
 ## Remaining
 
+- [ ] Demo follow-up: Turn 3+ validation with contradiction alert trigger (pending user confirmation)
 - [ ] Persist conversation state (DB or file, not just in-memory) — user prefers in-memory only
 - [ ] Browser tests need `playwright install` to run (pre-installed on CI runners)

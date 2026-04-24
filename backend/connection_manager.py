@@ -20,14 +20,17 @@ class ConnectionManager:
         except ValueError:
             pass
 
-    async def send_message(self, message: dict, websocket: WebSocket):
+    async def send_message(self, message: dict, websocket: WebSocket) -> bool:
+        """Send a message to a specific websocket. Returns True on success, False if the client disconnected."""
         try:
             await websocket.send_text(json.dumps(message))
+            return True
         except Exception:
             # Handle WebSocket connection errors gracefully
             # Remove disconnected websocket from active connections
             if websocket in self.active_connections:
                 self.active_connections.remove(websocket)
+            return False
 
     def get_connections(self) -> List[WebSocket]:
         """Return a copy of active connections for inspection."""

@@ -244,6 +244,11 @@ Please respond ONLY with a valid JSON in the following format:
             merged_goals.append(merged_goal)
 
         result = locked_goals + (merged_goals if merged_goals else mergeable_old + new_goals)
+        # Ensure current_message_id is applied even when the LLM returns
+        # an empty operations list or produces no merged_goals
+        if current_message_id:
+            for goal in result:
+                goal.source_message_id = current_message_id
         return result
         
     except Exception as e:
@@ -339,11 +344,16 @@ async def stream_llm_response(message: str, connection_manager, websocket, messa
         async for text_chunk in LLMService.generate_streaming_response(messages_for_llm, max_tokens=2000):
             full_response += text_chunk
 
-            await connection_manager.send_message({
+            send_ok = await connection_manager.send_message({
                 "type": "llm_response_chunk",
                 "text": text_chunk,
                 "message_id": message_id
             }, websocket)
+
+            # Stop burning tokens if the client disconnected mid-stream
+            if not send_ok:
+                logger.info("WebSocket disconnected mid-stream (message %s) — stopping LLM", message_id)
+                return full_response
 
         await connection_manager.send_message({
             "type": "llm_response_complete",

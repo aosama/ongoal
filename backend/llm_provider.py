@@ -1,17 +1,25 @@
 """
-LLM Provider abstraction - Supports multiple LLM backends (Ollama, OpenRouter, Anthropic)
+LLM Provider abstraction - Supports multiple LLM backends
 
 Configuration via .env:
-  LLM_PROVIDER=ollama|openrouter|anthropic  (default: ollama)
-  OLLAMA_BASE_URL, OLLAMA_MODEL              (for ollama — use :cloud or -cloud suffix for cloud models)
-  OLLAMA_MAX_RETRIES                        (default: 3, retry transient failures)
-  OLLAMA_RETRY_DELAY_MS                     (default: 1000, initial backoff delay in ms)
-  ANTHROPIC_API_KEY, ANTHROPIC_MODEL         (for anthropic provider)
-  OPENROUTER_API_KEY, OPENROUTER_MODEL       (for openrouter provider)
+  LLM_PROVIDER=ollama|ollama_cloud|openrouter|anthropic  (default: ollama)
 
-Cloud models (e.g. gemma4:31b-cloud, qwen3.5:cloud) are routed through your local
-Ollama installation to Ollama's cloud servers. No separate API key needed —
-just `ollama signin` once, then use :cloud model names.
+  --- Ollama local/proxy (LLM_PROVIDER=ollama) ---
+  OLLAMA_BASE_URL     Local Ollama daemon URL  (default: http://localhost:11434)
+  OLLAMA_MODEL        Model name; :cloud/-cloud suffix routes through Ollama Cloud (default: gemma4:31b-cloud)
+  OLLAMA_MAX_RETRIES  Retry count for transient failures (default: 3)
+  OLLAMA_RETRY_DELAY_MS  Initial backoff in ms, doubles each retry (default: 1000)
+
+  --- Ollama Cloud REST API (LLM_PROVIDER=ollama_cloud) ---
+  OLLAMA_CLOUD_BASE_URL  Ollama Cloud API base URL  (default: https://ollama.com/v1)
+  OLLAMA_CLOUD_API_KEY   API key from https://ollama.com/settings/api-keys
+  OLLAMA_CLOUD_MODEL     Model name, e.g. gemma3:27b, llama3.3:70b (default: gemma3:27b)
+
+  --- OpenRouter (LLM_PROVIDER=openrouter) ---
+  OPENROUTER_API_KEY, OPENROUTER_MODEL
+
+  --- Anthropic Claude (LLM_PROVIDER=anthropic) ---
+  ANTHROPIC_API_KEY, ANTHROPIC_MODEL
 """
 
 import asyncio
@@ -334,9 +342,130 @@ class AnthropicProvider(LLMProvider):
         }
 
 
+class OllamaCloudApiProvider(LLMProvider):
+    """Ollama Cloud REST API provider — OpenAI-compatible endpoint at https://ollama.com/v1.
+
+    Unlike the local OllamaProvider (which proxies through a local daemon), this provider
+    calls Ollama's hosted API directly using a Bearer API key. Supports all models listed
+    at https://ollama.com/models. Transient failures are retried with exponential backoff.
+
+    Required .env keys:
+      OLLAMA_CLOUD_API_KEY   — from https://ollama.com/settings/api-keys
+      OLLAMA_CLOUD_MODEL     — model to use (e.g. gemma3:27b, llama3.3:70b)
+      OLLAMA_CLOUD_BASE_URL  — override only if the endpoint changes (default: https://ollama.com/v1)
+    """
+
+    def __init__(self):
+        self.base_url = os.getenv("OLLAMA_CLOUD_BASE_URL", "https://ollama.com/v1").rstrip("/")
+        self.api_key = os.getenv("OLLAMA_CLOUD_API_KEY", "")
+        self.model = os.getenv("OLLAMA_CLOUD_MODEL", "gemma3:27b")
+        self.max_retries = int(os.getenv("OLLAMA_MAX_RETRIES", str(DEFAULT_MAX_RETRIES)))
+        self.retry_delay_ms = int(os.getenv("OLLAMA_RETRY_DELAY_MS", str(DEFAULT_RETRY_DELAY_MS)))
+
+    def _get_client(self) -> httpx.AsyncClient:
+        """Fresh async client per request — avoids event-loop-closed errors in tests."""
+        return httpx.AsyncClient(
+            timeout=120.0,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+
+    async def generate(self, prompt: str, max_tokens: int = 1000) -> str:
+        async def _call():
+            async with self._get_client() as client:
+                response = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    json={
+                        "model": self.model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "max_tokens": max_tokens,
+                    },
+                )
+                response.raise_for_status()
+                data = response.json()
+                return data["choices"][0]["message"]["content"].strip()
+
+        return await _retry_with_backoff(
+            _call, max_retries=self.max_retries, initial_delay_ms=self.retry_delay_ms,
+            label=f"OllamaCloud generate({self.model})",
+        )
+
+    async def generate_stream(
+        self, messages: List[Dict[str, str]], max_tokens: int = 2000
+    ) -> AsyncGenerator[str, None]:
+        async def _stream():
+            async with self._get_client() as client:
+                async with client.stream(
+                    "POST",
+                    f"{self.base_url}/chat/completions",
+                    json={
+                        "model": self.model,
+                        "messages": messages,
+                        "max_tokens": max_tokens,
+                        "stream": True,
+                    },
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        payload = line[6:].strip()
+                        if payload == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(payload)
+                            content = chunk["choices"][0].get("delta", {}).get("content", "")
+                            if content:
+                                yield content
+                        except (json.JSONDecodeError, KeyError, IndexError):
+                            continue
+
+        last_exception = None
+        for attempt in range(self.max_retries):
+            try:
+                async for chunk in _stream():
+                    yield chunk
+                return
+            except httpx.HTTPStatusError as exc:
+                if not _is_retryable_status(exc.response.status_code):
+                    raise
+                last_exception = exc
+                delay = (self.retry_delay_ms / 1000) * (2 ** attempt)
+                logger.warning(
+                    "OllamaCloud stream(%s) failed with %s (attempt %d/%d), retrying in %.1fs",
+                    self.model, exc.response.status_code, attempt + 1, self.max_retries, delay,
+                )
+                await asyncio.sleep(delay)
+            except httpx.ConnectError as exc:
+                last_exception = exc
+                delay = (self.retry_delay_ms / 1000) * (2 ** attempt)
+                logger.warning(
+                    "OllamaCloud stream(%s) connection error (attempt %d/%d), retrying in %.1fs",
+                    self.model, attempt + 1, self.max_retries, delay,
+                )
+                await asyncio.sleep(delay)
+        raise last_exception
+
+    def is_available(self) -> bool:
+        """Return True only when an API key has been configured."""
+        return bool(self.api_key)
+
+    def get_status(self) -> Dict[str, object]:
+        return {
+            "provider": "Ollama Cloud API",
+            "model": self.model,
+            "base_url": self.base_url,
+            "available": bool(self.api_key),
+            "cost": "cloud subscription",
+        }
+
+
 # Provider registry
 PROVIDERS = {
     "ollama": OllamaProvider,
+    "ollama_cloud": OllamaCloudApiProvider,
     "openrouter": OpenRouterProvider,
     "anthropic": AnthropicProvider,
 }
@@ -346,15 +475,17 @@ _active_provider: LLMProvider = None
 
 
 def get_provider() -> LLMProvider:
-    """Get the configured LLM provider instance (cached)"""
+    """Get the configured LLM provider instance (cached)."""
     global _active_provider
     if _active_provider is None:
-        provider_name = os.getenv("LLM_PROVIDER", "ollama").lower()
+        # Default to Ollama Cloud REST API for stable demo use.
+        # The local Ollama daemon (OLLAMA_BASE_URL) is unreliable for cloud models.
+        provider_name = os.getenv("LLM_PROVIDER", "ollama_cloud").lower()
         if provider_name not in PROVIDERS:
             logger.warning(
-                "Unknown LLM_PROVIDER '%s', falling back to 'ollama'", provider_name
+                "Unknown LLM_PROVIDER '%s', falling back to 'ollama_cloud'", provider_name
             )
-            provider_name = "ollama"
+            provider_name = "ollama_cloud"
         _active_provider = PROVIDERS[provider_name]()
     return _active_provider
 

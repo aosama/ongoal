@@ -287,30 +287,41 @@ createApp({
         // --- WebSocket ---
         const connectWebSocket = () => {
             try {
-                // Clean up any existing WebSocket before creating a new one
+                // Clean up any existing WebSocket before creating a new one,
+                // preventing stale handlers from triggering duplicate reconnections
                 if (ws.value) {
-                    ws.value.close();
+                    const oldWs = ws.value;
+                    ws.value = null;
+                    oldWs.onclose = null;
+                    oldWs.onerror = null;
+                    oldWs.onmessage = null;
+                    oldWs.close();
                 }
 
-                ws.value = new WebSocket(WS_URL);
+                const newWs = new WebSocket(WS_URL);
+                ws.value = newWs;
 
-                ws.value.onopen = () => {
+                newWs.onopen = () => {
                     sendWs({ type: 'get_conversation' });
                 };
 
-                ws.value.onmessage = (event) => {
+                newWs.onmessage = (event) => {
                     handleWsMessage(JSON.parse(event.data));
                 };
 
-                ws.value.onclose = () => {
+                newWs.onclose = () => {
+                    // If the connection drops while streaming, release the UI lock so
+                    // the user can retry without a page refresh
+                    isStreaming.value = false;
                     setTimeout(connectWebSocket, 3000);
                 };
 
-                ws.value.onerror = (err) => {
+                newWs.onerror = (err) => {
                     pushToast({ severity: 'error', alert_type: 'websocket_error', message: 'WebSocket connection error — check server status' });
                 };
             } catch (err) {
                 pushToast({ severity: 'error', alert_type: 'websocket_error', message: `WebSocket connection failed — ${err.message || err}` });
+                isStreaming.value = false;
                 setTimeout(connectWebSocket, 3000);
             }
         };

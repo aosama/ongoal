@@ -81,3 +81,14 @@ class TestAPIInfrastructure:
         # Should return successful response with CORS headers
         assert response.status_code == 200
         assert "Access-Control-Allow-Origin" in response.headers
+
+    def test_should_provide_cors_headers_for_loopback_frontend_origin(self, backend_url):
+        """Test backend allows 127.0.0.1 frontend origin used in browser tests"""
+        response = requests.get(
+            f"{backend_url}/api/health",
+            headers={"Origin": "http://127.0.0.1:8080"},
+            timeout=5,
+        )
+
+        assert response.status_code == 200
+        assert response.headers.get("Access-Control-Allow-Origin") == "http://127.0.0.1:8080"

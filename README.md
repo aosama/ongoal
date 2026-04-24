@@ -6,7 +6,7 @@
 [![Ollama Cloud](https://img.shields.io/badge/LLM-Ollama%20Cloud-purple.svg)](https://ollama.com/search?c=cloud)
 [![Follow on X](https://img.shields.io/badge/Follow-@AhmedHamdy29189-1DA1F2?logo=x&logoColor=white)](https://x.com/AhmedHamdy29189)
 
-✨ **Production-Ready** — 94/94 tests passing, production-grade architecture
+✨ **Production-Ready** — 114/114 backend tests passing, production-grade architecture
 
 > **Goal Tracking in Multi-Turn Conversations** - Inspired by concepts from the research paper ["OnGoal: A Modular Multi-Modal UI for Goal Awareness in Conversational AI"](https://arxiv.org/abs/2508.21061)
 
@@ -52,7 +52,7 @@ The Timeline tab displays the complete goal processing pipeline across conversat
 - **Python 3.13+** (recommended, 3.11+ supported)
 - **Modern web browser** (Chrome, Firefox, Safari, Edge)
 
-No API key is required for the default Ollama Cloud provider.
+No API key is required for the local Ollama daemon (requires Ollama running locally and a GPU). The default is the **Ollama Cloud REST API** (paid subscription).
 
 ### 1. Clone the Repository
 
@@ -146,32 +146,40 @@ cp .env.example .env
 
 ## 🔑 LLM Provider Setup
 
-OnGoal supports **multiple LLM providers** — including free options!
+OnGoal supports **multiple LLM providers**:
 
-### Option 1: Ollama (Free via Cloud or Local) — Default
+### Option 1: Ollama Cloud REST API (Default — Recommended)
 
-1. **Install Ollama** from [ollama.com](https://ollama.com)
-2. **Sign in** for cloud models (free tier, no local GPU):
+This is the default provider. It calls Ollama's hosted API directly via an OpenAI-compatible REST endpoint -- fast, reliable, and requires no local Ollama daemon.
+
+1. **Get an API key** at [ollama.com/settings/api-keys](https://ollama.com/settings/api-keys)
+2. **Configure `.env`**:
    ```bash
-   ollama signin
-   ollama pull gemma4:31b-cloud
-   # Or any cloud model: qwen3.5:cloud, kimi-k2.5:cloud, minimax-m2.7:cloud
+   LLM_PROVIDER=ollama_cloud
+   OLLAMA_CLOUD_BASE_URL=https://ollama.com/v1
+   OLLAMA_CLOUD_API_KEY=your_api_key_here
+   OLLAMA_CLOUD_MODEL=gemma4:31b-cloud
    ```
-   Or use local models (requires GPU):
+3. Browse available models at [ollama.com/models](https://ollama.com/models)
+
+### Option 2: Local Ollama Daemon (Free — Requires Local GPU)
+
+1. **Install Ollama** from [ollama.com/download](https://ollama.com/download)
+2. **Pull a model**:
    ```bash
-   ollama pull gemma4:latest
+   ollama pull gemma4:31b-cloud
    ```
 3. **Configure `.env`**:
    ```bash
    LLM_PROVIDER=ollama
+   OLLAMA_BASE_URL=http://localhost:11434
    OLLAMA_MODEL=gemma4:31b-cloud
    ```
-4. No API key needed — everything runs for free!
 
-### Option 2: OpenRouter (Free Tier)
+### Option 3: OpenRouter
 
 1. **Sign up** at [openrouter.ai](https://openrouter.ai)
-2. **Create an API key** (free tier available)
+2. **Create an API key**
 3. **Configure `.env`**:
    ```bash
    LLM_PROVIDER=openrouter
@@ -179,7 +187,7 @@ OnGoal supports **multiple LLM providers** — including free options!
    OPENROUTER_MODEL=google/gemma-2-9b-it:free
    ```
 
-### Option 3: Anthropic Claude (Paid)
+### Option 4: Anthropic Claude
 
 1. **Sign up** at [Anthropic Console](https://console.anthropic.com/)
 2. **Create an API Key** and add billing

@@ -27,7 +27,12 @@ logging.basicConfig(
 app = FastAPI(title="OnGoal Backend", version="1.0.0")
 
 # CORS middleware for Vue.js frontend
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:8080,http://localhost:3000").split(",")
+# Include both localhost and 127.0.0.1 variants so browser tests that navigate
+# to http://127.0.0.1:8080 (the loopback IP form) are not blocked by preflight.
+CORS_ORIGINS = os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:8080,http://localhost:3000,http://127.0.0.1:8080,http://127.0.0.1:3000",
+).split(",")
 
 app.add_middleware(
     CORSMiddleware,

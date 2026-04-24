@@ -27,7 +27,7 @@ Use this file like a cache.
 ## Maintenance snapshot
 
 - Last verified: 2026-04-17
-- Verification scope: runtime scripts, backend/frontend startup, LLM provider abstraction layer (Ollama/OpenRouter/Anthropic), goal pipeline (infer/merge/evaluate/keyphrase/detection), advanced detection (repetition/fixation/breakdown/progress), WebSocket + REST API surface (including goal-progress, sentence-similarity, goal-history), frontend goal detail panel + Events tab + keyphrase display + sentence highlighting modes, test suite (91/91 passing), conftest server fixtures, pytest.ini configuration.
+- Verification scope: runtime scripts, backend/frontend startup, LLM provider abstraction layer (Ollama Cloud REST API / OpenRouter / Anthropic), goal pipeline (infer/merge/evaluate/keyphrase/detection), advanced detection (repetition/fixation/breakdown/progress), WebSocket + REST API surface (including goal-progress, sentence-similarity, goal-history), frontend goal detail panel + Events tab + keyphrase display + sentence highlighting modes, test suite (114/114 passing), conftest server fixtures, pytest.ini configuration.
 
 ## 1. High-signal docs (read-first index)
 
@@ -120,10 +120,10 @@ Key architectural facts:
 ### Prerequisites
 
 - Python 3.13+
-- Ollama installed and signed in for cloud models: `ollama signin`
-- Pull the cloud model: `ollama pull gemma4:31b-cloud`
-- Default model: `gemma4:31b-cloud` (configurable via `OLLAMA_MODEL` in `.env`)
-- Cloud models (`:cloud` or `-cloud` suffix) run on Ollama's servers — no local GPU needed
+- Ollama Cloud API key (default): get one from [ollama.com/settings/api-keys](https://ollama.com/settings/api-keys)
+- Default model: `gemma4:31b-cloud` (configurable via `OLLAMA_CLOUD_MODEL` in `.env`)
+- Cloud models run on Ollama's servers — no local GPU needed
+- If using the **local Ollama daemon** (`LLM_PROVIDER=ollama`), install Ollama locally and pull the model instead
 
 ## 5. High-signal code anchors
 
@@ -144,18 +144,19 @@ Fastest places to start reading when diagnosing runtime behavior:
 Configuration via `.env`:
 
 ```
-LLM_PROVIDER=ollama                          # ollama (local or cloud), openrouter, anthropic
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=gemma4:31b-cloud                 # :cloud suffix = Ollama Cloud, no suffix = local GPU
-OLLAMA_MAX_RETRIES=3                         # retry transient failures (429, 500, 502, 503, 504)
-OLLAMA_RETRY_DELAY_MS=1000                   # initial backoff delay, doubles each retry
+LLM_PROVIDER=ollama_cloud                   # ollama_cloud (REST API), openrouter, anthropic, ollama (local daemon)
+OLLAMA_CLOUD_BASE_URL=https://ollama.com/v1   # Ollama Cloud REST endpoint
+OLLAMA_CLOUD_API_KEY=                         # From https://ollama.com/settings/api-keys
+OLLAMA_CLOUD_MODEL=gemma4:31b-cloud           # Browse models at https://ollama.com/models
+OLLAMA_MAX_RETRIES=3                          # retry transient failures (429, 500, 502, 503, 504)
+OLLAMA_RETRY_DELAY_MS=1000                    # initial backoff delay, doubles each retry
 OPENROUTER_API_KEY=                           # For openrouter
 OPENROUTER_MODEL=google/gemma-2-9b-it:free
 ANTHROPIC_API_KEY=                            # For anthropic
 ANTHROPIC_MODEL=claude-3-haiku-20240307
 ```
 
-Cloud models (`:cloud` suffix) route through local Ollama to Ollama's cloud servers — requires `ollama signin` once. No separate API key needed. Available cloud models: https://ollama.com/search?c=cloud
+**Ollama Cloud REST API** (default) calls Ollama's hosted API directly using a Bearer API key. This is the recommended provider for stable demos. Requires an API key from [ollama.com/settings/api-keys](https://ollama.com/settings/api-keys). Browse available models at [ollama.com/models](https://ollama.com/models).
 
 Provider registry in `backend/llm_provider.py`:
 
