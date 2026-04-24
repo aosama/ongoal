@@ -90,6 +90,8 @@ yarn-error.log*
 test-results/
 playwright-report/
 .playwright-mcp/
+snapshot-debug.yml
+*-debug.yml
 
 # QA screenshots (root-level)
 /*.png
