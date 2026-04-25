@@ -26,8 +26,8 @@ Use this file like a cache.
 
 ## Maintenance snapshot
 
-- Last verified: 2026-04-17
-- Verification scope: runtime scripts, backend/frontend startup, LLM provider abstraction layer (Ollama Cloud REST API / OpenRouter / Anthropic), goal pipeline (infer/merge/evaluate/keyphrase/detection), advanced detection (repetition/fixation/breakdown/progress), WebSocket + REST API surface (including goal-progress, sentence-similarity, goal-history), frontend goal detail panel + Events tab + keyphrase display + sentence highlighting modes, test suite (114/114 passing), conftest server fixtures, pytest.ini configuration.
+- Last verified: 2026-04-24
+- Verification scope: runtime scripts, backend/frontend startup, LLM provider abstraction layer (Ollama Cloud REST API / OpenRouter / Anthropic), goal pipeline extracted into `backend/pipelines/` (infer/merge/evaluate/stream/detect/progress), robust JSON parsing via `backend/json_parser.py` with brace counting, state management via `ConversationRepository` with per-conversation `asyncio.Lock`, WebSocket + REST API surface (including goal-progress, sentence-similarity, goal-history), frontend goal detail panel + Events tab + keyphrase display + sentence highlighting modes, test suite (139/139 passing), conftest server fixtures, pytest.ini configuration.
 
 ## 1. High-signal docs (read-first index)
 

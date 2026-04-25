@@ -65,6 +65,10 @@ applyTo: "**"
 - [x] 114/114 backend tests passing (20 tests added since last count)
 - [x] Demo scenario validated end-to-end: Content Creation with Revisions (Turn 1–2, goal inference, contradiction detection, evaluation panel, Events tab, individual goal view)
 - [x] Regression: `replace_outdated_goals` not imported in `websocket_handlers.py` — caused second-turn pipeline crash (NameError → ws:close without response → UI freeze)
+- [x] Architecture review: pipeline extracted into focused modules under `backend/pipelines/` (infer, merge, evaluate, streaming, keyphrases, detection, progress)
+- [x] Architecture review: conversation state extracted from `api_endpoints.py` into `ConversationRepository` with per-conversation `asyncio.Lock`
+- [x] Architecture review: naive `re.search(r'\{.*\}')` JSON regex replaced with robust `extract_json_object()` across entire pipeline (brace counting + markdown fence stripping)
+- [x] 139/139 backend tests passing (25 new extraction/JSON + repository tests; ~45 total since last progress update)
 
 ## Remaining
 
