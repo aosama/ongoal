@@ -69,6 +69,7 @@ applyTo: "**"
 - [x] Architecture review: conversation state extracted from `api_endpoints.py` into `ConversationRepository` with per-conversation `asyncio.Lock`
 - [x] Architecture review: naive `re.search(r'\{.*\}')` JSON regex replaced with robust `extract_json_object()` across entire pipeline (brace counting + markdown fence stripping)
 - [x] 139/139 backend tests passing (25 new extraction/JSON + repository tests; ~45 total since last progress update)
+- [x] Exploratory browser testing: validated two-turn conversation flow with streaming, goal merge, individual view, evaluation text highlighting, repetition detection alert, goal history, timeline, and Events tabs all working correctly
 
 ## Remaining
 

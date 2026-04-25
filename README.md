@@ -6,7 +6,7 @@
 [![Ollama Cloud](https://img.shields.io/badge/LLM-Ollama%20Cloud-purple.svg)](https://ollama.com/search?c=cloud)
 [![Follow on X](https://img.shields.io/badge/Follow-@AhmedHamdy29189-1DA1F2?logo=x&logoColor=white)](https://x.com/AhmedHamdy29189)
 
-✨ **Production-Ready** — 114/114 backend tests passing, production-grade architecture
+✨ **Production-Ready** — 139/139 backend tests passing, production-grade architecture
 
 > **Goal Tracking in Multi-Turn Conversations** - Inspired by concepts from the research paper ["OnGoal: A Modular Multi-Modal UI for Goal Awareness in Conversational AI"](https://arxiv.org/abs/2508.21061)
 
@@ -310,8 +310,8 @@ Tests use the same LLM provider configured in your `.env` file. For fastest, cos
 
 ```bash
 # Ensure your .env file uses Ollama Cloud (default)
-LLM_PROVIDER=ollama
-OLLAMA_MODEL=gemma4:31b-cloud
+LLM_PROVIDER=ollama_cloud
+OLLAMA_CLOUD_MODEL=gemma4:31b-cloud
 ```
 
 ## 🏗️ Architecture
@@ -329,16 +329,12 @@ OnGoal follows a **modular, test-driven architecture**:
 
 ```
 backend/
-├── main.py              # FastAPI application entry point
-├── api_endpoints.py     # REST API routes (/api/*)
-├── websocket_handlers.py # WebSocket message handling
-├── connection_manager.py # WebSocket connection management
-├── goal_pipeline.py     # Core goal processing logic
-├── llm_service.py       # LLM service facade
-├── llm_provider.py      # Multi-provider abstraction (Ollama/OpenRouter/Anthropic)
-└── models.py           # Data models (Goal, Message, Conversation)
+├── main.py              # FastAPI app, WebSocket + REST endpoints
+├── pipelines/           # Core goal processing (inference, merge, evaluate, detection, progress)
+├── repository.py        # Per-conversation state with async locks
+├── llm_provider.py      # Multi-provider LLM abstraction
+└── models.py            # Data models
 ```
-
 ### Frontend Structure
 
 ```
@@ -390,11 +386,11 @@ User Message → Goal Inference → Goal Merging → LLM Response → Goal Evalu
 
 ### ✅ Phase 2 (Enhanced Features) - COMPLETED
 
-- [x] **Enhanced Testing**: TDD-compliant browser tests with 94 tests passing
+- [x] **Enhanced Testing**: TDD-compliant browser tests with 139 tests passing
 - [x] **Error Handling**: Graceful LLM service failures with retry logic
 - [x] **Timeline Visualization**: D3.js Sankey-style goal pipeline timeline
 - [x] **Individual Goal Views**: Filtered chat + evaluations sidebar
-- [x] **Advanced Controls**: Goal locking, completion, progress tracking
+- [x] **Advanced Controls**: Goal locking, completion, progress tracking, goal history with restore
 - [x] **Keyphrase Extraction**: Shared vs unique phrase highlighting
 - [x] **Alerts Pipeline**: Forgetting, contradiction, derailment, repetition, fixation, breakdown detection
 - [x] **Sentence Similarity**: Similar vs unique sentence highlighting in chat
