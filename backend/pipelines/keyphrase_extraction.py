@@ -6,7 +6,6 @@ Implements Appendix A.4 of the OnGoal requirements.
 
 import json
 import logging
-import re
 from typing import List
 
 from backend.llm_service import LLMService
@@ -34,9 +33,9 @@ Assistant response: {assistant_response}"""
     try:
         response_text = await LLMService.generate_response(keyphrase_prompt, max_tokens=500)
 
-        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-        if json_match:
-            data = json.loads(json_match.group())
+        from backend.json_parser import extract_json_object
+        data = extract_json_object(response_text)
+        if data:
             return data.get("keyphrases", [])
 
         logger.warning("Keyphrase extraction: no JSON found in response")

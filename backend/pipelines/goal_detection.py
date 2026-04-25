@@ -2,11 +2,11 @@
 
 import json
 import logging
-import re
 from typing import List, Dict, Optional
 
 from backend.models import Goal
 from backend.llm_service import LLMService
+from backend.json_parser import extract_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +49,8 @@ Respond ONLY with valid JSON:
 
     try:
         response_text = await LLMService.generate_response(prompt, max_tokens=800)
-        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-        if json_match:
-            data = json.loads(json_match.group())
+        data = extract_json_object(response_text)
+        if data:
             return data.get("forgotten_goals", [])
         return []
     except Exception as e:
@@ -90,9 +89,8 @@ Respond ONLY with valid JSON:
 
     try:
         response_text = await LLMService.generate_response(prompt, max_tokens=800)
-        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-        if json_match:
-            data = json.loads(json_match.group())
+        data = extract_json_object(response_text)
+        if data:
             return data.get("contradictions", [])
         return []
     except Exception as e:
@@ -131,9 +129,8 @@ Respond ONLY with valid JSON:
 
     try:
         response_text = await LLMService.generate_response(prompt, max_tokens=600)
-        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-        if json_match:
-            data = json.loads(json_match.group())
+        data = extract_json_object(response_text)
+        if data:
             if data.get("derailment", False):
                 return {
                     "reason": data.get("reason", ""),
@@ -176,9 +173,8 @@ Respond ONLY with valid JSON:
 
     try:
         response_text = await LLMService.generate_response(prompt, max_tokens=600)
-        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-        if json_match:
-            data = json.loads(json_match.group())
+        data = extract_json_object(response_text)
+        if data:
             if data.get("repetition", False):
                 return {
                     "repeated_content": data.get("repeated_content", ""),
@@ -230,9 +226,8 @@ Respond ONLY with valid JSON:
 
     try:
         response_text = await LLMService.generate_response(prompt, max_tokens=600)
-        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-        if json_match:
-            data = json.loads(json_match.group())
+        data = extract_json_object(response_text)
+        if data:
             if data.get("fixation", False):
                 return {
                     "fixated_goal_ids": data.get("fixated_goal_ids", []),
@@ -285,9 +280,8 @@ Respond ONLY with valid JSON:
 
     try:
         response_text = await LLMService.generate_response(prompt, max_tokens=600)
-        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-        if json_match:
-            data = json.loads(json_match.group())
+        data = extract_json_object(response_text)
+        if data:
             if data.get("breakdown", False):
                 return {
                     "reason": data.get("reason", ""),

@@ -44,3 +44,41 @@ class TestExtractJsonObject:
         text = '```json\n{"status": "ok"}\n```'
         result = extract_json_object(text)
         assert result == {"status": "ok"}
+
+
+class TestPipelineFunctionsWithFencedJson:
+    """Verify pipeline functions still work when LLM returns markdown-fenced JSON."""
+
+    @pytest.mark.asyncio
+    async def test_should_infer_goals_when_llm_returns_markdown_fenced_json(self):
+        from unittest.mock import patch
+        from backend.pipelines.goal_inference import infer_goals
+        fake_response = (
+            'Here is the JSON:\n```json\n'
+            '{"clauses": [{"clause": "Write a story", "type": "request", "summary": "Create one"}]}'
+            '\n```\nHope this helps!'
+        )
+        with patch('backend.pipelines.goal_inference.LLMService.generate_response', return_value=fake_response):
+            goals = await infer_goals("Write a story", "msg_0")
+        assert len(goals) == 1
+        assert goals[0].text == "Write a story"
+        assert goals[0].type == "request"
+
+    @pytest.mark.asyncio
+    async def test_should_evaluate_goal_when_llm_returns_fenced_json(self):
+        from unittest.mock import patch
+        from backend.models import Goal
+        from backend.pipelines.goal_evaluation import evaluate_goal
+        fake = '```json\n{"category": "confirm", "explanation": "ok", "examples": ["yes"]}\n```'
+        with patch('backend.pipelines.goal_evaluation.LLMService.generate_response', return_value=fake):
+            result = await evaluate_goal(Goal(id="G0", text="x", type="request", source_message_id="m"), "y")
+        assert result["category"] == "confirm"
+
+    @pytest.mark.asyncio
+    async def test_should_extract_keyphrases_when_llm_returns_fenced_json(self):
+        from unittest.mock import patch
+        from backend.pipelines.keyphrase_extraction import extract_keyphrases
+        fake = '```json\n{"keyphrases": ["space", "travel"]}\n```'
+        with patch('backend.pipelines.keyphrase_extraction.LLMService.generate_response', return_value=fake):
+            result = await extract_keyphrases("Space travel is amazing.")
+        assert result == ["space", "travel"]

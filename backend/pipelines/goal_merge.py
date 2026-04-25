@@ -6,7 +6,6 @@ Implements Appendix A.2 of the OnGoal requirements.
 
 import json
 import logging
-import re
 from datetime import datetime
 from typing import List, Dict
 
@@ -128,8 +127,9 @@ Please respond ONLY with a valid JSON in the following format:
     try:
         response_text = await LLMService.generate_response(merge_prompt, max_tokens=1500)
 
-        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-        operations = json.loads(json_match.group()).get("operations", []) if json_match else []
+        from backend.json_parser import extract_json_object
+        operations_data = extract_json_object(response_text)
+        operations = operations_data.get("operations", []) if operations_data else []
 
         merged_goals = []
         all_mergeable = mergeable_old + new_goals

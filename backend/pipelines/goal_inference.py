@@ -6,7 +6,6 @@ Implements Appendix A.1 of the OnGoal requirements.
 
 import json
 import logging
-import re
 from datetime import datetime
 from typing import List
 
@@ -48,12 +47,9 @@ Human dialogue: {message}"""
         try:
             response_text = await LLMService.generate_response(inference_prompt, max_tokens=1000)
 
-            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-            if json_match:
-                response_data = json.loads(json_match.group())
-                clauses_data = response_data.get("clauses", [])
-            else:
-                clauses_data = []
+            from backend.json_parser import extract_json_object
+            response_data = extract_json_object(response_text)
+            clauses_data = response_data.get("clauses", []) if response_data else []
             
             goals = []
             total_prior = existing_goals_count

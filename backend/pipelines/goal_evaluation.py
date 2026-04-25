@@ -6,7 +6,6 @@ Implements Appendix A.3 of the OnGoal requirements.
 
 import json
 import logging
-import re
 from typing import Dict
 
 from backend.models import Goal, GoalEvaluation
@@ -35,9 +34,9 @@ Assistant response: {assistant_response}"""
     try:
         response_text = await LLMService.generate_response(evaluation_prompt, max_tokens=1000)
 
-        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-        if json_match:
-            evaluation_data = json.loads(json_match.group())
+        from backend.json_parser import extract_json_object
+        evaluation_data = extract_json_object(response_text)
+        if evaluation_data:
             evaluation = GoalEvaluation(
                 goal_id=goal.id,
                 category=evaluation_data.get("category", "ignore"),

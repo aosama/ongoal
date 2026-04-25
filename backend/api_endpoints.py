@@ -389,9 +389,9 @@ Respond ONLY with valid JSON:
     try:
         response_text = await LLMService.generate_response(prompt, max_tokens=1000)
         import json as _json
-        json_match = _re.search(r'\{.*\}', response_text, _re.DOTALL)
-        if json_match:
-            data = _json.loads(json_match.group())
+        from backend.json_parser import extract_json_object
+        data = extract_json_object(response_text)
+        if data:
             similar = []
             for group in data.get("similar_groups", []):
                 indices = group.get("sentence_indices", [])
