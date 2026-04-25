@@ -414,15 +414,6 @@ async def get_goal_progress(conversation_id: str):
     }
 
 
-def get_conversations_store():
-    """Get reference to conversations storage for websocket handler.
-
-    DEPRECATED: Prefer importing conversation_repository directly.
-    Kept for backward compatibility during transition.
-    """
-    return conversation_repository
-
-
 @router.get("/api/conversations/{conversation_id}/goal-history")
 async def get_goal_history(conversation_id: str):
     """Get goal mutation history for restore functionality (REQ-04-02-205)"""

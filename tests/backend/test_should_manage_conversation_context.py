@@ -17,7 +17,7 @@ backend_dir = Path(__file__).parent.parent.parent / "backend"
 sys.path.insert(0, str(backend_dir))
 
 from backend.models import Conversation, Message
-from backend.api_endpoints import get_conversations_store
+from backend.repository import ConversationRepository
 
 
 @pytest.mark.backend
@@ -34,7 +34,7 @@ class TestConversationContext:
         
         # ARRANGE: Set up conversation with previous messages
         conversation_id = "test_conversation"
-        conversations = get_conversations_store()
+        conversations = ConversationRepository()
         conversations.create(conversation_id)
         
         # Add previous messages to conversation history
@@ -110,7 +110,7 @@ class TestConversationContext:
         """
         
         conversation_id = "test_order"
-        conversations = get_conversations_store()
+        conversations = ConversationRepository()
         conversations.create(conversation_id)
         
         # Add messages in specific order
@@ -163,7 +163,7 @@ class TestConversationContext:
         """
         
         conversation_id = "test_storage"
-        conversations = get_conversations_store()
+        conversations = ConversationRepository()
         conversations.create(conversation_id)
         
         # Add messages
