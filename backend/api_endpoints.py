@@ -7,12 +7,13 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from backend.models import Conversation, Goal, Message, GoalAlert
+from backend.repository import ConversationRepository
 
 # Create router for API endpoints
 router = APIRouter()
 
-# In-memory storage only
-conversations = {}
+# Singleton repository instance — shared across REST endpoints and WebSocket handlers
+conversation_repository = ConversationRepository()
 
 
 @router.get("/")
@@ -47,11 +48,7 @@ async def llm_status():
 @router.post("/api/conversations/{conversation_id}/reset")
 async def reset_conversation(conversation_id: str):
     """Reset conversation state - CRITICAL for test isolation"""
-    if conversation_id in conversations:
-        del conversations[conversation_id]
-
-    # Create fresh conversation
-    conversations[conversation_id] = Conversation(id=conversation_id)
+    conversation_repository.reset(conversation_id)
 
     return {
         "status": "success",
@@ -62,8 +59,8 @@ async def reset_conversation(conversation_id: str):
 
 @router.get("/api/conversations/{conversation_id}")
 async def get_conversation(conversation_id: str):
-    if conversation_id in conversations:
-        conversation = conversations[conversation_id]
+    conversation = conversation_repository.get(conversation_id)
+    if conversation:
         return {
             "id": conversation.id,
             "messages": [msg.model_dump() for msg in conversation.messages],
@@ -78,10 +75,10 @@ async def get_conversation(conversation_id: str):
 @router.get("/api/conversations/{conversation_id}/alerts")
 async def get_alerts(conversation_id: str):
     """Get all alerts for a conversation"""
-    if conversation_id not in conversations:
+    conversation = conversation_repository.get(conversation_id)
+    if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    conversation = conversations[conversation_id]
     return {
         "alerts": [alert.model_dump() for alert in conversation.alerts],
         "count": len(conversation.alerts)
@@ -91,10 +88,10 @@ async def get_alerts(conversation_id: str):
 @router.delete("/api/conversations/{conversation_id}/alerts")
 async def clear_alerts(conversation_id: str):
     """Clear all alerts for a conversation"""
-    if conversation_id not in conversations:
+    conversation = conversation_repository.get(conversation_id)
+    if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    conversation = conversations[conversation_id]
     cleared_count = len(conversation.alerts)
     conversation.alerts = []
 
@@ -108,10 +105,10 @@ async def clear_alerts(conversation_id: str):
 @router.delete("/api/conversations/{conversation_id}/alerts/{alert_index}")
 async def dismiss_alert(conversation_id: str, alert_index: int):
     """Dismiss a single alert by index"""
-    if conversation_id not in conversations:
+    conversation = conversation_repository.get(conversation_id)
+    if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    conversation = conversations[conversation_id]
     if alert_index < 0 or alert_index >= len(conversation.alerts):
         raise HTTPException(status_code=404, detail="Alert not found")
 
@@ -134,10 +131,8 @@ class AlertInjectRequest(BaseModel):
 @router.post("/api/conversations/{conversation_id}/alerts/_inject")
 async def inject_alert(conversation_id: str, req: AlertInjectRequest):
     """Inject an alert for testing purposes"""
-    if conversation_id not in conversations:
-        conversations[conversation_id] = Conversation(id=conversation_id)
+    conversation = conversation_repository.get_or_create(conversation_id)
 
-    conversation = conversations[conversation_id]
     alert = GoalAlert(
         alert_type=req.alert_type,
         severity=req.severity,
@@ -171,10 +166,7 @@ class GoalUpdateRequest(BaseModel):
 @router.post("/api/conversations/{conversation_id}/goals")
 async def create_goal(conversation_id: str, goal_request: GoalCreateRequest):
     """Create a new goal manually"""
-    if conversation_id not in conversations:
-        conversations[conversation_id] = Conversation(id=conversation_id)
-
-    conversation = conversations[conversation_id]
+    conversation = conversation_repository.get_or_create(conversation_id)
     goal_id = f"G{len(conversation.goals)}_manual"
 
     new_goal = Goal(
@@ -196,10 +188,10 @@ async def create_goal(conversation_id: str, goal_request: GoalCreateRequest):
 @router.get("/api/conversations/{conversation_id}/goals")
 async def get_goals(conversation_id: str):
     """Get all goals for a conversation"""
-    if conversation_id not in conversations:
+    conversation = conversation_repository.get(conversation_id)
+    if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    conversation = conversations[conversation_id]
     return {
         "goals": [goal.model_dump() for goal in conversation.goals],
         "count": len(conversation.goals)
@@ -208,12 +200,11 @@ async def get_goals(conversation_id: str):
 @router.get("/api/conversations/{conversation_id}/goals/{goal_id}")
 async def get_goal(conversation_id: str, goal_id: str):
     """Get a specific goal by ID"""
-    if conversation_id not in conversations:
+    conversation = conversation_repository.get(conversation_id)
+    if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    conversation = conversations[conversation_id]
     goal = next((g for g in conversation.goals if g.id == goal_id), None)
-
     if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
 
@@ -222,12 +213,11 @@ async def get_goal(conversation_id: str, goal_id: str):
 @router.put("/api/conversations/{conversation_id}/goals/{goal_id}")
 async def update_goal(conversation_id: str, goal_id: str, goal_update: GoalUpdateRequest):
     """Update a specific goal"""
-    if conversation_id not in conversations:
+    conversation = conversation_repository.get(conversation_id)
+    if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    conversation = conversations[conversation_id]
     goal = next((g for g in conversation.goals if g.id == goal_id), None)
-
     if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
 
@@ -252,12 +242,11 @@ async def update_goal(conversation_id: str, goal_id: str, goal_update: GoalUpdat
 @router.delete("/api/conversations/{conversation_id}/goals/{goal_id}")
 async def delete_goal(conversation_id: str, goal_id: str):
     """Delete a specific goal"""
-    if conversation_id not in conversations:
+    conversation = conversation_repository.get(conversation_id)
+    if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    conversation = conversations[conversation_id]
     goal_index = next((i for i, g in enumerate(conversation.goals) if g.id == goal_id), None)
-
     if goal_index is None:
         raise HTTPException(status_code=404, detail="Goal not found")
 
@@ -273,12 +262,11 @@ async def delete_goal(conversation_id: str, goal_id: str):
 @router.post("/api/conversations/{conversation_id}/goals/{goal_id}/lock")
 async def lock_goal(conversation_id: str, goal_id: str):
     """Lock a goal to prevent automatic updates"""
-    if conversation_id not in conversations:
+    conversation = conversation_repository.get(conversation_id)
+    if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    conversation = conversations[conversation_id]
     goal = next((g for g in conversation.goals if g.id == goal_id), None)
-
     if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
 
@@ -294,12 +282,11 @@ async def lock_goal(conversation_id: str, goal_id: str):
 @router.post("/api/conversations/{conversation_id}/goals/{goal_id}/unlock")
 async def unlock_goal(conversation_id: str, goal_id: str):
     """Unlock a goal to allow automatic updates"""
-    if conversation_id not in conversations:
+    conversation = conversation_repository.get(conversation_id)
+    if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    conversation = conversations[conversation_id]
     goal = next((g for g in conversation.goals if g.id == goal_id), None)
-
     if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
 
@@ -315,7 +302,7 @@ async def unlock_goal(conversation_id: str, goal_id: str):
 @router.get("/api/conversations")
 async def list_conversations():
     """List all conversations"""
-    conversation_ids = list(conversations.keys())
+    conversation_ids = conversation_repository.all_ids()
     return {
         "conversations": conversation_ids,
         "count": len(conversation_ids)
@@ -325,10 +312,9 @@ async def list_conversations():
 @router.post("/api/conversations/{conversation_id}/keyphrases")
 async def extract_keyphrases(conversation_id: str):
     """Extract keyphrases from the last assistant response (REQ-09-04)"""
-    if conversation_id not in conversations:
+    conversation = conversation_repository.get(conversation_id)
+    if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
-
-    conversation = conversations[conversation_id]
 
     # Find the last assistant message
     assistant_messages = [m for m in conversation.messages if m.role == "assistant"]
@@ -350,10 +336,10 @@ async def extract_keyphrases(conversation_id: str):
 @router.get("/api/conversations/{conversation_id}/sentence-similarity")
 async def get_sentence_similarity(conversation_id: str):
     """Get similar and unique sentences across assistant responses (REQ-04-03-006/007)"""
-    if conversation_id not in conversations:
+    conversation = conversation_repository.get(conversation_id)
+    if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    conversation = conversations[conversation_id]
     assistant_messages = [m for m in conversation.messages if m.role == "assistant"]
 
     if len(assistant_messages) < 2:
@@ -415,10 +401,10 @@ Respond ONLY with valid JSON:
 @router.get("/api/conversations/{conversation_id}/goal-progress")
 async def get_goal_progress(conversation_id: str):
     """Get goal progress tracking across messages (REQ-03-02-001, REQ-03-02-004)"""
-    if conversation_id not in conversations:
+    conversation = conversation_repository.get(conversation_id)
+    if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    conversation = conversations[conversation_id]
     from backend.pipelines import compute_goal_progress
     progress = compute_goal_progress(conversation)
 
@@ -429,17 +415,21 @@ async def get_goal_progress(conversation_id: str):
 
 
 def get_conversations_store():
-    """Get reference to conversations storage for websocket handler"""
-    return conversations
+    """Get reference to conversations storage for websocket handler.
+
+    DEPRECATED: Prefer importing conversation_repository directly.
+    Kept for backward compatibility during transition.
+    """
+    return conversation_repository
 
 
 @router.get("/api/conversations/{conversation_id}/goal-history")
 async def get_goal_history(conversation_id: str):
     """Get goal mutation history for restore functionality (REQ-04-02-205)"""
-    if conversation_id not in conversations:
+    conversation = conversation_repository.get(conversation_id)
+    if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    conversation = conversations[conversation_id]
     return {
         "goal_history": [entry.model_dump() for entry in conversation.goal_history],
         "turn_count": len([m for m in conversation.messages if m.role == "user"])
@@ -449,10 +439,10 @@ async def get_goal_history(conversation_id: str):
 @router.post("/api/conversations/{conversation_id}/goal-history/{entry_index}/restore")
 async def restore_goal_from_history(conversation_id: str, entry_index: int):
     """Restore a previous goal version from history (REQ-04-02-205)"""
-    if conversation_id not in conversations:
+    conversation = conversation_repository.get(conversation_id)
+    if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    conversation = conversations[conversation_id]
     if entry_index < 0 or entry_index >= len(conversation.goal_history):
         raise HTTPException(status_code=400, detail="Invalid history entry index")
 
@@ -501,15 +491,15 @@ async def replace_goal(conversation_id: str, goal_id: str, req: GoalReplaceReque
     Marks the old goal as replaced, creates a new goal, and records
     the operation in goal_history.
     """
-    if conversation_id not in conversations:
+    conversation = conversation_repository.get(conversation_id)
+    if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    conversation = conversations[conversation_id]
     goal = next((g for g in conversation.goals if g.id == goal_id), None)
     if not goal:
         raise HTTPException(status_code=404, detail="Goal not found")
 
-    # Mark oldgoal as replaced (in-place so other refs see the update)
+    # Mark old goal as replaced (in-place so other refs see the update)
     goal.status = "replaced"
 
     # Create replacement goal

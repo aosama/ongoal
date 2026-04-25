@@ -2,7 +2,7 @@ import pytest
 import asyncio
 from datetime import datetime
 from backend.models import Conversation, Goal, GoalHistoryEntry
-from backend.api_endpoints import restore_goal_from_history, conversations
+from backend.api_endpoints import restore_goal_from_history, conversation_repository
 
 
 class TestRestoreGoalFromHistory:
@@ -21,7 +21,8 @@ class TestRestoreGoalFromHistory:
             timestamp=now,
         )
         conversation.goal_history.append(entry)
-        conversations[conversation_id] = conversation
+        conversation_repository.create(conversation_id)
+        conversation_repository._store[conversation_id] = conversation
 
         # Call restore endpoint directly
         result = asyncio.run(restore_goal_from_history(conversation_id, 0))
@@ -43,7 +44,8 @@ class TestRestoreGoalFromHistory:
             timestamp=datetime.now().isoformat(),
         )
         conversation.goal_history.append(entry)
-        conversations[conversation_id] = conversation
+        conversation_repository.create(conversation_id)
+        conversation_repository._store[conversation_id] = conversation
 
         asyncio.run(restore_goal_from_history(conversation_id, 0))
 
@@ -73,7 +75,8 @@ class TestRestoreGoalFromHistory:
             timestamp="2025-06-01T12:00:00",
         )
         conversation.goal_history.append(entry)
-        conversations[conversation_id] = conversation
+        conversation_repository.create(conversation_id)
+        conversation_repository._store[conversation_id] = conversation
 
         asyncio.run(restore_goal_from_history(conversation_id, 0))
 

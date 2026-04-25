@@ -35,7 +35,7 @@ class TestConversationContext:
         # ARRANGE: Set up conversation with previous messages
         conversation_id = "test_conversation"
         conversations = get_conversations_store()
-        conversations[conversation_id] = Conversation(id=conversation_id)
+        conversations.create(conversation_id)
         
         # Add previous messages to conversation history
         previous_messages = [
@@ -66,10 +66,10 @@ class TestConversationContext:
         ]
         
         for msg in previous_messages:
-            conversations[conversation_id].messages.append(msg)
+            conversations.get(conversation_id).messages.append(msg)
         
         # ACT: Build context as the LLM function would
-        conversation = conversations[conversation_id]
+        conversation = conversations.get(conversation_id)
         messages_for_llm = []
         
         if conversation and conversation.messages:
@@ -111,7 +111,7 @@ class TestConversationContext:
         
         conversation_id = "test_order"
         conversations = get_conversations_store()
-        conversations[conversation_id] = Conversation(id=conversation_id)
+        conversations.create(conversation_id)
         
         # Add messages in specific order
         messages = [
@@ -128,10 +128,10 @@ class TestConversationContext:
                 role=role,
                 timestamp=f"2024-01-01T10:0{i}:00"
             )
-            conversations[conversation_id].messages.append(msg)
+            conversations.get(conversation_id).messages.append(msg)
         
         # ACT: Build context as would be done for LLM
-        conversation = conversations[conversation_id]
+        conversation = conversations.get(conversation_id)
         messages_for_llm = []
         
         if conversation and conversation.messages:
@@ -164,17 +164,17 @@ class TestConversationContext:
         
         conversation_id = "test_storage"
         conversations = get_conversations_store()
-        conversations[conversation_id] = Conversation(id=conversation_id)
+        conversations.create(conversation_id)
         
         # Add messages
         msg1 = Message(id="1", content="Hello", role="user", timestamp="2024-01-01T10:00:00")
         msg2 = Message(id="2", content="Hi there!", role="assistant", timestamp="2024-01-01T10:00:30")
         
-        conversations[conversation_id].messages.append(msg1)
-        conversations[conversation_id].messages.append(msg2)
+        conversations.get(conversation_id).messages.append(msg1)
+        conversations.get(conversation_id).messages.append(msg2)
         
         # Verify storage
-        stored_conversation = conversations[conversation_id]
+        stored_conversation = conversations.get(conversation_id)
         assert len(stored_conversation.messages) == 2
         assert stored_conversation.messages[0].content == "Hello"
         assert stored_conversation.messages[1].content == "Hi there!"
