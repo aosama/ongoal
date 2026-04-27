@@ -103,3 +103,18 @@ class Conversation(BaseModel):
             if goal.id == goal_id:
                 return goal
         return None
+
+    def record_goal_history(self, turn: int, operation: str, goal_id: str,
+                            goal_text: str, goal_type: str,
+                            previous_goal_ids: list[str] = None,
+                            previous_goal_texts: list[str] = None):
+        """Append a GoalHistoryEntry tracking a goal mutation (REQ-04-02-205)."""
+        self.goal_history.append(GoalHistoryEntry(
+            turn=turn,
+            operation=operation,
+            goal_id=goal_id,
+            goal_text=goal_text,
+            goal_type=goal_type,
+            previous_goal_ids=previous_goal_ids or [],
+            previous_goal_texts=previous_goal_texts or [],
+        ))

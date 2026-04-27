@@ -4,13 +4,12 @@ Goal Merge Stage — Merge new and existing goals using LLM-powered operations.
 Implements Appendix A.2 of the OnGoal requirements.
 """
 
-import json
 import logging
 from datetime import datetime
 from typing import List, Dict
 
 from backend.models import Goal
-from backend.llm_service import LLMService
+from backend.llm_caller import call_llm_json
 from backend.pipelines.goal_detection import detect_contradiction
 
 logger = logging.getLogger(__name__)
@@ -23,7 +22,7 @@ async def replace_outdated_goals(existing_goals: List[Goal], new_goals: List[Goa
     goal as replaced. Adds a GoalHistoryEntry tracking the replacement.
     Returns the filtered existing_goals with replaced goals removed.
     """
-    from backend.models import GoalHistoryEntry
+    from backend.models import Goal
 
     combined = existing_goals + new_goals
     contradictions = await detect_contradiction(combined)
@@ -53,17 +52,12 @@ async def replace_outdated_goals(existing_goals: List[Goal], new_goals: List[Goa
         old_goal.status = "replaced"
         replaced_ids.add(old_goal.id)
 
-        # Track in conversation history
-        entry = GoalHistoryEntry(
-            turn=len([m for m in conversation.messages if m.role == "user"]),
-            operation="replace",
-            goal_id=old_goal.id,
-            goal_text=old_goal.text,
-            goal_type=old_goal.type,
-            previous_goal_ids=[new_goal.id],
-            previous_goal_texts=[new_goal.text],
+        turn = len([m for m in conversation.messages if m.role == "user"])
+        conversation.record_goal_history(
+            turn=turn, operation="replace", goal_id=old_goal.id,
+            goal_text=old_goal.text, goal_type=old_goal.type,
+            previous_goal_ids=[new_goal.id], previous_goal_texts=[new_goal.text],
         )
-        conversation.goal_history.append(entry)
 
     return [g for g in existing_goals if g.id not in replaced_ids]
 
@@ -125,10 +119,7 @@ Please respond ONLY with a valid JSON in the following format:
 }}"""
 
     try:
-        response_text = await LLMService.generate_response(merge_prompt, max_tokens=1500)
-
-        from backend.json_parser import extract_json_object
-        operations_data = extract_json_object(response_text)
+        operations_data = await call_llm_json(merge_prompt, max_tokens=1500, label="Goal merge")
         operations = operations_data.get("operations", []) if operations_data else []
 
         merged_goals = []

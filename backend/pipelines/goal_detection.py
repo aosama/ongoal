@@ -1,30 +1,31 @@
 """Goal Detection — Detect conversational anomalies and goal behavior patterns."""
 
-import json
 import logging
 from typing import List, Dict, Optional
 
 from backend.models import Goal
-from backend.llm_service import LLMService
-from backend.json_parser import extract_json_object
+from backend.llm_caller import call_llm_json
 
 logger = logging.getLogger(__name__)
 
-async def detect_forgetting(goals: List[Goal], assistant_response: str) -> List[Dict]:
-    """Detect goals that may have been forgotten in the conversation (REQ-03-01-006).
 
-    A goal is considered "forgotten" if it has been repeatedly ignored across
-    multiple assistant responses. Returns a list of alert dicts.
-    """
+async def _detect_flag(prompt: str, bool_key: str, result_keys: dict[str, object], max_tokens: int = 600, label: str = "") -> Optional[Dict]:
+    """Generic boolean-flag detection: call LLM, check a boolean key, return selected keys."""
+    data = await call_llm_json(prompt, max_tokens=max_tokens, label=label)
+    if data and data.get(bool_key, False):
+        return {k: data.get(k, v) for k, v in result_keys.items()}
+    return None
+
+
+async def detect_forgetting(goals: List[Goal], assistant_response: str) -> List[Dict]:
+    """Detect goals that may have been forgotten in the conversation (REQ-03-01-006)."""
     if not goals or not assistant_response:
         return []
 
-    active_goals = [g for g in goals if not g.completed and not g.locked]
     repeatedly_ignored = [
-        g for g in active_goals
-        if g.evaluation and g.evaluation.category == "ignore"
+        g for g in goals
+        if not g.completed and not g.locked and g.evaluation and g.evaluation.category == "ignore"
     ]
-
     if not repeatedly_ignored:
         return []
 
@@ -47,25 +48,12 @@ Respond ONLY with valid JSON:
   ]
 }}"""
 
-    try:
-        response_text = await LLMService.generate_response(prompt, max_tokens=800)
-        data = extract_json_object(response_text)
-        if data:
-            return data.get("forgotten_goals", [])
-        return []
-    except Exception as e:
-        logger.warning("Forgetting detection failed: %s", e)
-        return []
+    data = await call_llm_json(prompt, max_tokens=800, label="Forgetting detection")
+    return data.get("forgotten_goals", []) if data else []
 
 
 async def detect_contradiction(goals: List[Goal]) -> List[Dict]:
-    """Detect contradictions between active goals (REQ-03-01-003).
-
-    Returns pairs of goals that contradict each other with explanation.
-    """
-    if len(goals) < 2:
-        return []
-
+    """Detect contradictions between active goals (REQ-03-01-003)."""
     active_goals = [g for g in goals if not g.completed]
     if len(active_goals) < 2:
         return []
@@ -87,23 +75,12 @@ Respond ONLY with valid JSON:
   ]
 }}"""
 
-    try:
-        response_text = await LLMService.generate_response(prompt, max_tokens=800)
-        data = extract_json_object(response_text)
-        if data:
-            return data.get("contradictions", [])
-        return []
-    except Exception as e:
-        logger.warning("Contradiction detection failed: %s", e)
-        return []
+    data = await call_llm_json(prompt, max_tokens=800, label="Contradiction detection")
+    return data.get("contradictions", []) if data else []
 
 
 async def detect_derailment(goals: List[Goal], assistant_response: str) -> Optional[Dict]:
-    """Detect if the assistant response has derailed from all tracked goals (REQ-03-02).
-
-    Derailment means the response has drifted away from all active goals
-    without addressing any of them substantively.
-    """
+    """Detect if the assistant response has derailed from all tracked goals (REQ-03-02)."""
     active_goals = [g for g in goals if not g.completed]
     if not active_goals or not assistant_response:
         return None
@@ -127,27 +104,15 @@ Respond ONLY with valid JSON:
   "suggestion": "<SUGGESTION_IF_TRUE>"
 }}"""
 
-    try:
-        response_text = await LLMService.generate_response(prompt, max_tokens=600)
-        data = extract_json_object(response_text)
-        if data:
-            if data.get("derailment", False):
-                return {
-                    "reason": data.get("reason", ""),
-                    "suggestion": data.get("suggestion", ""),
-                }
-        return None
-    except Exception as e:
-        logger.warning("Derailment detection failed: %s", e)
-        return None
+    return await _detect_flag(
+        prompt, "derailment",
+        {"reason": "", "suggestion": ""},
+        max_tokens=600, label="Derailment detection",
+    )
 
 
 async def detect_repetition(conversation_messages: List) -> Optional[Dict]:
-    """Detect if the LLM is repeating content across recent responses (REQ-03-02-006).
-
-    Compares the last N assistant responses. If significant repetition is
-    found, returns an alert dict with details.
-    """
+    """Detect if the LLM is repeating content across recent responses (REQ-03-02-006)."""
     assistant_responses = [m for m in conversation_messages if m.role == "assistant"]
     if len(assistant_responses) < 2:
         return None
@@ -171,40 +136,26 @@ Respond ONLY with valid JSON:
   "suggestion": "<SUGGESTION_FOR_USER>"
 }}"""
 
-    try:
-        response_text = await LLMService.generate_response(prompt, max_tokens=600)
-        data = extract_json_object(response_text)
-        if data:
-            if data.get("repetition", False):
-                return {
-                    "repeated_content": data.get("repeated_content", ""),
-                    "suggestion": data.get("suggestion", ""),
-                }
-        return None
-    except Exception as e:
-        logger.warning("Repetition detection failed: %s", e)
-        return None
+    return await _detect_flag(
+        prompt, "repetition",
+        {"repeated_content": "", "suggestion": ""},
+        max_tokens=600, label="Repetition detection",
+    )
 
 
 async def detect_fixation(goals: List[Goal]) -> Optional[Dict]:
-    """Detect if the LLM is fixating on a single goal while neglecting others (REQ-03-03-002).
-
-    Fixation means one goal is repeatedly confirmed while others are
-    consistently ignored, suggesting unbalanced attention.
-    """
+    """Detect if the LLM is fixating on a single goal while neglecting others (REQ-03-03-002)."""
     active_goals = [g for g in goals if not g.completed]
     if len(active_goals) < 2:
         return None
 
     confirmed_goals = [g for g in active_goals if g.status == "confirm"]
     ignored_goals = [g for g in active_goals if g.status == "ignore"]
-
     if not confirmed_goals or not ignored_goals:
         return None
 
     goals_summary = "\n".join(
-        f"- {g.id}: {g.text} (status: {g.status or 'unevaluated'})"
-        for g in active_goals
+        f"- {g.id}: {g.text} (status: {g.status or 'unevaluated'})" for g in active_goals
     )
 
     prompt = f"""You are analyzing whether the assistant shows goal fixation — excessively focusing on some goals while consistently neglecting others.
@@ -224,29 +175,15 @@ Respond ONLY with valid JSON:
   "suggestion": "<SUGGESTION>"
 }}"""
 
-    try:
-        response_text = await LLMService.generate_response(prompt, max_tokens=600)
-        data = extract_json_object(response_text)
-        if data:
-            if data.get("fixation", False):
-                return {
-                    "fixated_goal_ids": data.get("fixated_goal_ids", []),
-                    "neglected_goal_ids": data.get("neglected_goal_ids", []),
-                    "reason": data.get("reason", ""),
-                    "suggestion": data.get("suggestion", ""),
-                }
-        return None
-    except Exception as e:
-        logger.warning("Fixation detection failed: %s", e)
-        return None
+    return await _detect_flag(
+        prompt, "fixation",
+        {"fixated_goal_ids": [], "neglected_goal_ids": [], "reason": "", "suggestion": ""},
+        max_tokens=600, label="Fixation detection",
+    )
 
 
 async def detect_breakdown(conversation_messages: List, goals: List[Goal]) -> Optional[Dict]:
-    """Detect communication breakdown when user rephrases the same unmet goal (REQ-03-01-007).
-
-    A breakdown occurs when the user sends multiple messages addressing the
-    same goal that the assistant keeps ignoring or misunderstanding.
-    """
+    """Detect communication breakdown when user rephrases the same unmet goal (REQ-03-01-007)."""
     user_messages = [m for m in conversation_messages if m.role == "user"]
     if len(user_messages) < 2:
         return None
@@ -278,17 +215,8 @@ Respond ONLY with valid JSON:
   "suggestion": "<SUGGESTION>"
 }}"""
 
-    try:
-        response_text = await LLMService.generate_response(prompt, max_tokens=600)
-        data = extract_json_object(response_text)
-        if data:
-            if data.get("breakdown", False):
-                return {
-                    "reason": data.get("reason", ""),
-                    "repeated_goal_ids": data.get("repeated_goal_ids", []),
-                    "suggestion": data.get("suggestion", ""),
-                }
-        return None
-    except Exception as e:
-        logger.warning("Breakdown detection failed: %s", e)
-        return None
+    return await _detect_flag(
+        prompt, "breakdown",
+        {"reason": "", "repeated_goal_ids": [], "suggestion": ""},
+        max_tokens=600, label="Breakdown detection",
+    )

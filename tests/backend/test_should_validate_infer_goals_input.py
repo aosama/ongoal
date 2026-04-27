@@ -1,5 +1,5 @@
 import pytest
-from backend.goal_pipeline import infer_goals
+from backend.pipelines.goal_inference import infer_goals
 
 
 class TestInferGoalsInputValidation:

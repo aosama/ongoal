@@ -5,7 +5,7 @@ Tests for repetition detection, fixation detection, goal progress, and goal comp
 
 import pytest
 from backend.models import Goal, GoalEvaluation, Message, Conversation
-from backend.goal_pipeline import compute_goal_progress, detect_repetition, detect_fixation, detect_breakdown
+from backend.pipelines import compute_goal_progress, detect_repetition, detect_fixation, detect_breakdown
 
 
 @pytest.mark.unit

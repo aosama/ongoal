@@ -5,7 +5,7 @@ Tests for defects found during manual QA testing
 
 import pytest
 from backend.models import Goal, GoalEvaluation, Message, Conversation
-from backend.goal_pipeline import merge_goals, compute_goal_progress
+from backend.pipelines import merge_goals, compute_goal_progress
 
 
 @pytest.mark.unit

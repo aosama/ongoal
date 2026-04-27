@@ -1,5 +1,6 @@
 """Tests for robust LLM JSON extraction utility."""
 import pytest
+from unittest.mock import patch, AsyncMock
 
 
 class TestExtractJsonObject:
@@ -58,7 +59,10 @@ class TestPipelineFunctionsWithFencedJson:
             '{"clauses": [{"clause": "Write a story", "type": "request", "summary": "Create one"}]}'
             '\n```\nHope this helps!'
         )
-        with patch('backend.pipelines.goal_inference.LLMService.generate_response', return_value=fake_response):
+        with patch('backend.llm_provider.get_provider') as mock_get_provider:
+            mock_provider = AsyncMock()
+            mock_provider.generate.return_value = fake_response
+            mock_get_provider.return_value = mock_provider
             goals = await infer_goals("Write a story", "msg_0")
         assert len(goals) == 1
         assert goals[0].text == "Write a story"
@@ -70,7 +74,10 @@ class TestPipelineFunctionsWithFencedJson:
         from backend.models import Goal
         from backend.pipelines.goal_evaluation import evaluate_goal
         fake = '```json\n{"category": "confirm", "explanation": "ok", "examples": ["yes"]}\n```'
-        with patch('backend.pipelines.goal_evaluation.LLMService.generate_response', return_value=fake):
+        with patch('backend.llm_provider.get_provider') as mock_get_provider:
+            mock_provider = AsyncMock()
+            mock_provider.generate.return_value = fake
+            mock_get_provider.return_value = mock_provider
             result = await evaluate_goal(Goal(id="G0", text="x", type="request", source_message_id="m"), "y")
         assert result["category"] == "confirm"
 
@@ -79,6 +86,9 @@ class TestPipelineFunctionsWithFencedJson:
         from unittest.mock import patch
         from backend.pipelines.keyphrase_extraction import extract_keyphrases
         fake = '```json\n{"keyphrases": ["space", "travel"]}\n```'
-        with patch('backend.pipelines.keyphrase_extraction.LLMService.generate_response', return_value=fake):
+        with patch('backend.llm_provider.get_provider') as mock_get_provider:
+            mock_provider = AsyncMock()
+            mock_provider.generate.return_value = fake
+            mock_get_provider.return_value = mock_provider
             result = await extract_keyphrases("Space travel is amazing.")
         assert result == ["space", "travel"]

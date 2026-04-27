@@ -233,9 +233,9 @@ _backend_server = None
 _frontend_server = None
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def backend_server():
-    """Single backend server for all tests"""
+    """Opt-in fixture: backend server for integration/browser tests. Not started for pure unit tests."""
     global _backend_server
     _backend_server = BackendTestServer()
     _backend_server.start()
@@ -263,8 +263,8 @@ def clean_state():
 
 
 @pytest.fixture
-def backend_url():
-    """Backend server URL"""
+def backend_url(backend_server):
+    """Backend server URL — starts the server if not already running."""
     return "http://localhost:8000"
 
 

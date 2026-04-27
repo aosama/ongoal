@@ -5,14 +5,14 @@ LLM Streaming Stage — Stream assistant responses with mid-stream disconnect ha
 import logging
 from typing import List
 
-from backend.llm_service import LLMService
+import backend.llm_provider as llm_provider
 
 logger = logging.getLogger(__name__)
 
 
 async def stream_llm_response(message: str, connection_manager, websocket, message_id: str, conversation_messages: List):
     """Stream LLM response using the configured provider"""
-    if not LLMService.is_available():
+    if not llm_provider.is_available():
         error_msg = "LLM service unavailable - API key not configured"
         await connection_manager.send_message({
             "type": "error",
@@ -36,7 +36,7 @@ async def stream_llm_response(message: str, connection_manager, websocket, messa
         })
 
         full_response = ""
-        async for text_chunk in LLMService.generate_streaming_response(messages_for_llm, max_tokens=2000):
+        async for text_chunk in llm_provider.generate_stream(messages_for_llm, max_tokens=2000):
             full_response += text_chunk
 
             send_ok = await connection_manager.send_message({

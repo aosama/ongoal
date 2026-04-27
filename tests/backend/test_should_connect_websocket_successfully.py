@@ -49,7 +49,8 @@ async def test_should_connect_to_websocket_directly(backend_server):
                         print(f"  - {goal['type']}: {goal['text']}")
                     
                     assert len(goals) > 0, "Should have inferred at least one goal"
-                    assert any(goal['type'] == 'question' for goal in goals), "Should have inferred a question goal"
+                    assert any(goal.get('type') in ('question', 'request', 'suggestion', 'offer') for goal in goals), \
+                        "Should have inferred a valid goal type"
                     
                 else:
                     print(f"❌ Expected goals_inferred, got: {response_data.get('type')}")

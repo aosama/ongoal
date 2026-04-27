@@ -14,3 +14,4 @@ from backend.pipelines.goal_detection import (
     detect_repetition, detect_fixation, detect_breakdown,
 )
 from backend.pipelines.goal_progress import compute_goal_progress
+from backend.pipelines.sentence_similarity import compute_sentence_similarity

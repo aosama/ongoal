@@ -8,7 +8,7 @@ maximum coverage breadth.
 
 import pytest
 from backend.models import Goal, Conversation, Message
-from backend.goal_pipeline import replace_outdated_goals
+from backend.pipelines.goal_merge import replace_outdated_goals
 
 
 class TestReplaceOutdatedGoals:
@@ -43,7 +43,7 @@ class TestReplaceOutdatedGoals:
                 {"goal_id_1": "G0", "goal_id_2": "G2", "reason": "Contradicts", "resolution": "Replace"}
             ]
 
-        monkeypatch.setattr("backend.goal_pipeline.detect_contradiction", fake_detect)
+        monkeypatch.setattr("backend.pipelines.goal_merge.detect_contradiction", fake_detect)
         conversation.goals = existing_goals.copy()
         result = await replace_outdated_goals(conversation.goals, contradicting_goals, "msg_2", conversation)
 
@@ -59,7 +59,7 @@ class TestReplaceOutdatedGoals:
                 {"goal_id_1": "G0", "goal_id_2": "G2", "reason": "Contradicts", "resolution": "Replace"}
             ]
 
-        monkeypatch.setattr("backend.goal_pipeline.detect_contradiction", fake_detect)
+        monkeypatch.setattr("backend.pipelines.goal_merge.detect_contradiction", fake_detect)
         conversation.goals = existing_goals.copy()
         await replace_outdated_goals(conversation.goals, contradicting_goals, "msg_2", conversation)
 
@@ -73,7 +73,7 @@ class TestReplaceOutdatedGoals:
         async def fake_detect(goals):
             return []
 
-        monkeypatch.setattr("backend.goal_pipeline.detect_contradiction", fake_detect)
+        monkeypatch.setattr("backend.pipelines.goal_merge.detect_contradiction", fake_detect)
         new_goals = [Goal(id="G2", text="Add a table of contents", type="suggestion", source_message_id="msg_2")]
         conversation.goals = existing_goals.copy()
         result = await replace_outdated_goals(conversation.goals, new_goals, "msg_2", conversation)

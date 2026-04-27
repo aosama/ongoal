@@ -8,9 +8,25 @@ import os
 import tempfile
 from unittest.mock import patch, AsyncMock, MagicMock
 from backend.models import Goal, Message
-from backend.goal_pipeline import infer_goals, merge_goals, evaluate_goal, stream_llm_response
-from backend.llm_service import LLMService
+from backend.pipelines import infer_goals, merge_goals, evaluate_goal, stream_llm_response
+from backend.llm_provider import get_service_status, is_available
 from backend.connection_manager import ConnectionManager
+
+
+def _mock_provider(generate_side_effect=None, generate_return=None, stream_side_effect=None, is_available_return=True):
+    provider = MagicMock()
+    provider.is_available.return_value = is_available_return
+    provider.generate = AsyncMock()
+    if generate_side_effect:
+        provider.generate.side_effect = generate_side_effect
+    elif generate_return is not None:
+        provider.generate.return_value = generate_return
+    if stream_side_effect:
+        provider.generate_stream = stream_side_effect
+    else:
+        provider.generate_stream = AsyncMock()
+    provider.get_status.return_value = {"provider": "mock", "model": "mock", "available": True, "cost": "free"}
+    return provider
 
 class TestServiceErrorHandling:
     """Test error handling following TDD principles"""
@@ -32,8 +48,7 @@ class TestServiceErrorHandling:
         THEN: Should return empty list and not crash
         """
         # GIVEN - Mock LLM service as unavailable
-        with patch('backend.goal_pipeline.LLMService.generate_response') as mock_generate:
-            mock_generate.side_effect = RuntimeError("❌ ANTHROPIC_API_KEY not configured")
+        with patch('backend.llm_provider.get_provider', return_value=_mock_provider(generate_side_effect=RuntimeError("API key not configured"))):
 
             # WHEN
             result = await infer_goals("Help me write a story", "msg_001", 0)
@@ -50,8 +65,7 @@ class TestServiceErrorHandling:
         THEN: Should fallback gracefully without crashing
         """
         # GIVEN - Mock LLM service to raise API error
-        with patch('backend.goal_pipeline.LLMService.generate_response') as mock_generate:
-            mock_generate.side_effect = Exception("API rate limit exceeded")
+        with patch('backend.llm_provider.get_provider', return_value=_mock_provider(generate_side_effect=Exception("API rate limit exceeded"))):
 
             # WHEN
             inference_result = await infer_goals("Write a mystery novel", "msg_001", 0)
@@ -67,8 +81,7 @@ class TestServiceErrorHandling:
         THEN: Should handle JSON parsing errors gracefully
         """
         # GIVEN - Mock LLM to return malformed JSON
-        with patch('backend.goal_pipeline.LLMService.generate_response') as mock_generate:
-            mock_generate.return_value = "This is not valid JSON at all!"
+        with patch('backend.llm_provider.get_provider', return_value=_mock_provider(generate_return="This is not valid JSON at all!")):
 
             # WHEN
             result = await infer_goals("Help me code", "msg_001", 0)
@@ -87,8 +100,7 @@ class TestServiceErrorHandling:
         old_goals = sample_goals[:1]
         new_goals = sample_goals[1:]
 
-        with patch('backend.goal_pipeline.LLMService.generate_response') as mock_generate:
-            mock_generate.side_effect = Exception("LLM service timeout")
+        with patch('backend.llm_provider.get_provider', return_value=_mock_provider(generate_side_effect=Exception("LLM service timeout"))):
 
             # WHEN
             result = await merge_goals(old_goals, new_goals)
@@ -108,8 +120,7 @@ class TestServiceErrorHandling:
         goal = sample_goals[0]
         assistant_response = "Here's a great story for you..."
 
-        with patch('backend.goal_pipeline.LLMService.generate_response') as mock_generate:
-            mock_generate.side_effect = Exception("Service temporarily unavailable")
+        with patch('backend.llm_provider.get_provider', return_value=_mock_provider(generate_side_effect=Exception("Service temporarily unavailable"))):
 
             # WHEN
             result = await evaluate_goal(goal, assistant_response)
@@ -117,7 +128,7 @@ class TestServiceErrorHandling:
             # THEN
             assert result["goal_id"] == goal.id
             assert result["category"] == "ignore"
-            assert "service error" in result["explanation"].lower()
+            assert "unable" in result["explanation"].lower()
             assert result["examples"] == []
             assert "timestamp" in result
 
@@ -133,8 +144,7 @@ class TestServiceErrorHandling:
         mock_manager.send_message = AsyncMock()
         mock_websocket = MagicMock()
 
-        with patch('backend.goal_pipeline.LLMService.generate_streaming_response') as mock_stream:
-            mock_stream.side_effect = Exception("Streaming connection lost")
+        with patch('backend.llm_provider.get_provider', return_value=_mock_provider(stream_side_effect=Exception("Streaming connection lost"))):
 
             # WHEN
             result = await stream_llm_response(
@@ -158,7 +168,7 @@ class TestServiceErrorHandling:
         THEN: Should provide detailed status information
         """
         # WHEN
-        status = LLMService.get_service_status()
+        status = get_service_status()
 
         # THEN - Provider-agnostic status fields
         assert "provider" in status
@@ -192,8 +202,7 @@ class TestServiceErrorHandling:
         THEN: Should handle empty responses gracefully
         """
         # GIVEN
-        with patch('backend.goal_pipeline.LLMService.generate_response') as mock_generate:
-            mock_generate.return_value = "   \n\t  "  # Whitespace only
+        with patch('backend.llm_provider.get_provider', return_value=_mock_provider(generate_return="   \n\t  ")):
 
             # WHEN
             result = await infer_goals("Test message", "msg_001", 0)
@@ -209,9 +218,7 @@ class TestServiceErrorHandling:
         THEN: Should handle missing fields gracefully
         """
         # GIVEN
-        with patch('backend.goal_pipeline.LLMService.generate_response') as mock_generate:
-            # JSON with missing required fields
-            mock_generate.return_value = '{"clauses": [{"clause": "Write story"}]}'  # Missing type and summary
+        with patch('backend.llm_provider.get_provider', return_value=_mock_provider(generate_return='{"clauses": [{"clause": "Write story"}]}')):
 
             # WHEN
             result = await infer_goals("Write a story", "msg_001", 0)
@@ -273,7 +280,8 @@ class TestServiceErrorHandling:
         mock_manager.send_message = AsyncMock()
         mock_websocket = MagicMock()
 
-        with patch('backend.goal_pipeline.LLMService.is_available', return_value=False):
+        with patch('backend.llm_provider.is_available', return_value=False), \
+             patch('backend.llm_provider.get_provider', return_value=_mock_provider()):
             # WHEN
             result = await stream_llm_response(
                 "Test message",
@@ -295,12 +303,11 @@ class TestServiceErrorHandling:
         THEN: Should provide accurate availability status
         """
         # WHEN
-        is_available = LLMService.is_available()
+        is_available_result = is_available()
 
         # THEN
-        assert isinstance(is_available, bool)
+        assert isinstance(is_available_result, bool)
 
-        # If available, service status should reflect that
-        if is_available:
-            status = LLMService.get_service_status()
+        if is_available_result:
+            status = get_service_status()
             assert status["available"] == True

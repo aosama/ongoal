@@ -4,12 +4,11 @@ Goal Evaluation Stage — Assess how assistant responses address tracked goals.
 Implements Appendix A.3 of the OnGoal requirements.
 """
 
-import json
 import logging
 from typing import Dict
 
 from backend.models import Goal, GoalEvaluation
-from backend.llm_service import LLMService
+from backend.llm_caller import call_llm_json
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +31,7 @@ Please respond ONLY with a valid JSON in the following format:
 Assistant response: {assistant_response}"""
 
     try:
-        response_text = await LLMService.generate_response(evaluation_prompt, max_tokens=1000)
-
-        from backend.json_parser import extract_json_object
-        evaluation_data = extract_json_object(response_text)
+        evaluation_data = await call_llm_json(evaluation_prompt, max_tokens=1000, label=f"Goal evaluation ({goal.id})")
         if evaluation_data:
             evaluation = GoalEvaluation(
                 goal_id=goal.id,
@@ -47,14 +43,13 @@ Assistant response: {assistant_response}"""
             goal.status = evaluation.category
             return evaluation.model_dump()
 
-        else:
-            fallback = GoalEvaluation(
-                goal_id=goal.id, category="ignore",
-                explanation="Unable to evaluate goal",
-            )
-            goal.evaluation = fallback
-            goal.status = "ignore"
-            return fallback.model_dump()
+        fallback = GoalEvaluation(
+            goal_id=goal.id, category="ignore",
+            explanation="Unable to evaluate goal",
+        )
+        goal.evaluation = fallback
+        goal.status = "ignore"
+        return fallback.model_dump()
 
     except Exception as e:
         logger.warning("Goal evaluation failed for %s: %s", goal.id, e)
